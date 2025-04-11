@@ -67,9 +67,13 @@ def explore_parquet_dataset(parquet_file):
     distances = sorted(metadata_df['distance_mm'].unique())
     thread_safe_log('info', f"Distance values (mm): {distances}")
     
-    # Force values
-    forces = sorted(metadata_df['force_value'].unique())
-    thread_safe_log('info', f"Force values: {forces}")
+    # Load values
+    if 'load_g' in metadata_df.columns:
+        loads = sorted(metadata_df['load_g'].unique())
+        thread_safe_log('info', f"Load values (g): {loads}")
+    elif 'force_value' in metadata_df.columns:
+        forces = sorted(metadata_df['force_value'].unique())
+        thread_safe_log('info', f"Force values: {forces}")
     
     # Map types
     map_types = sorted(metadata_df['map_type'].unique())
@@ -141,104 +145,42 @@ def load_image_thread(sample, output_path=None):
         # Prepare title parts
         material_name = sample['material']
         distance_mm = sample['distance_mm']
-        force_value = sample['force_value']
-        trial_number = sample['trial_number']
+        
+        # Handle different column names for force/load
+        force_value = 0
+        if 'force_value' in sample:
+            force_value = sample['force_value']
+        elif 'load_g' in sample:
+            force_value = sample['load_g']
+            
+        # Handle trial number if it exists
+        trial_number = 0
+        if 'trial_number' in sample:
+            trial_number = sample['trial_number']
+            
         map_type_name = sample['map_type']
         
         title = f"{material_name} at {distance_mm}mm"
         if force_value > 0:
             title += f"\nforce: {force_value}"
         if trial_number > 0:
-            title += f", trial: {trialimport os
-import pandas as pd
-import pyarrow.parquet as pq
-import matplotlib.pyplot as plt
-import numpy as np
-from PIL import Image
-import logging
-import time
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('parquet_explorer.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
-def explore_parquet_dataset(parquet_file):
-    """
-    Explore the contents of a Parquet dataset and print its structure.
-    
-    Parameters:
-    -----------
-    parquet_file : str
-        Path to the Parquet file
-    
-    Returns:
-    --------
-    pandas.DataFrame
-        Metadata DataFrame
-    """
-    start_time = time.time()
-    logger.info(f"Loading Parquet file: {parquet_file}")
-    
-    # Read the parquet file
-    metadata_df = pd.read_parquet(parquet_file)
-    
-    # Print summary information
-    logger.info("=== Dataset Summary ===")
-    logger.info(f"Parquet file size: {os.path.getsize(parquet_file) / (1024*1024):.2f} MB")
-    logger.info(f"Total records: {len(metadata_df)}")
-    
-    # Materials
-    materials = metadata_df['material'].unique()
-    logger.info(f"Materials ({len(materials)}): {', '.join(materials)}")
-    
-    # Distance values
-    distances = sorted(metadata_df['distance_mm'].unique())
-    logger.info(f"Distance values (mm): {distances}")
-    
-    # Force values
-    forces = sorted(metadata_df['force_value'].unique())
-    logger.info(f"Force values: {forces}")
-    
-    # Map types
-    map_types = sorted(metadata_df['map_type'].unique())
-    logger.info(f"Map types: {', '.join(map_types)}")
-    
-    # Print metadata structure
-    logger.info("\n=== Metadata Structure ===")
-    logger.info(f"Columns: {metadata_df.columns.tolist()}")
-    logger.info("\nColumn types:")
-    for col, dtype in zip(metadata_df.dtypes.index, metadata_df.dtypes.values):
-        logger.info(f"  {col}: {dtype}")
-    
-    # Analyze distribution by material and map type
-    logger.info("\n=== Distribution by Material ===")
-    material_counts = metadata_df['material'].value_counts()
-    for material, count in material_counts.items():
-        logger.info(f"  {material}: {count} images")
-    
-    logger.info("\n=== Distribution by Map Type ===")
-    map_type_counts = metadata_df['map_type'].value_counts()
-    for map_type, count in map_type_counts.items():
-        logger.info(f"  {map_type}: {count} images")
-    
-    # Check for missing values
-    missing_values = metadata_df.isnull().sum()
-    if missing_values.sum() > 0:
-        logger.info("\n=== Missing Values ===")
-        for col, count in missing_values[missing_values > 0].items():
-            logger.info(f"  {col}: {count} missing values")
-    
-    elapsed_time = time.time() - start_time
-    logger.info(f"Exploration completed in {elapsed_time:.2f} seconds")
-    
-    return metadata_df
+            title += f", trial: {trial_number}"
+        title += f"\nmap: {map_type_name}"
+        
+        # Return dictionary with image and metadata
+        return {
+            'image_id': image_id,
+            'image': img_array,
+            'material': material_name,
+            'distance_mm': distance_mm,
+            'force_value': force_value,
+            'map_type': map_type_name,
+            'title': title
+        }
+            
+    except Exception as e:
+        thread_safe_log('error', f"Thread {thread_name} error loading {image_id}: {e}")
+        return None
 
 
 def visualize_samples(metadata_df, output_dir="sample_images", num_samples=5):
@@ -260,7 +202,7 @@ def visualize_samples(metadata_df, output_dir="sample_images", num_samples=5):
     materials = metadata_df['material'].unique()
     map_types = metadata_df['map_type'].unique()
     
-    logger.info(f"Visualizing {num_samples} random samples")
+    thread_safe_log('info', f"Visualizing {num_samples} random samples")
     
     # Select samples from different materials and map types if possible
     samples = []
@@ -292,7 +234,7 @@ def visualize_samples(metadata_df, output_dir="sample_images", num_samples=5):
     # Create a grid of plots
     n_samples = len(samples)
     if n_samples == 0:
-        logger.error("No samples found to visualize")
+        thread_safe_log('error', "No samples found to visualize")
         return
     
     cols = min(3, n_samples)
@@ -310,9 +252,20 @@ def visualize_samples(metadata_df, output_dir="sample_images", num_samples=5):
     # Plot each sample
     for i, sample in enumerate(samples):
         try:
+            # Add file path if not present
+            if 'file_path' not in sample and 'parquet_path' in sample and 'image_id' in sample:
+                # Try to reconstruct file path or handle accordingly
+                pass
+                
             # Load the image
-            img_path = sample['file_path']
-            img = Image.open(img_path)
+            if 'file_path' in sample:
+                img_path = sample['file_path']
+                img = Image.open(img_path)
+            elif 'image_bytes' in sample:
+                from io import BytesIO
+                img = Image.open(BytesIO(sample['image_bytes']))
+            else:
+                raise ValueError("No image data or path available")
             
             # Plot the image
             ax = axes[i]
@@ -321,8 +274,19 @@ def visualize_samples(metadata_df, output_dir="sample_images", num_samples=5):
             # Prepare title
             material_name = sample['material']
             distance_mm = sample['distance_mm']
-            force_value = sample['force_value']
-            trial_number = sample['trial_number']
+            
+            # Handle different column names for force/load
+            force_value = 0
+            if 'force_value' in sample:
+                force_value = sample['force_value']
+            elif 'load_g' in sample:
+                force_value = sample['load_g']
+                
+            # Handle trial number if it exists
+            trial_number = 0
+            if 'trial_number' in sample:
+                trial_number = sample['trial_number']
+                
             map_type_name = sample['map_type']
             
             title = f"{material_name} at {distance_mm}mm"
@@ -339,10 +303,10 @@ def visualize_samples(metadata_df, output_dir="sample_images", num_samples=5):
             sample_filename = f"sample_{i+1}_{material_name}_{distance_mm}mm_{map_type_name}.png"
             sample_path = os.path.join(output_dir, sample_filename)
             img.save(sample_path)
-            logger.info(f"Saved sample image to {sample_path}")
+            thread_safe_log('info', f"Saved sample image to {sample_path}")
             
         except Exception as e:
-            logger.error(f"Error visualizing sample {i}: {e}")
+            thread_safe_log('error', f"Error visualizing sample {i}: {e}")
             ax = axes[i]
             ax.text(0.5, 0.5, f"Error loading image", 
                     horizontalalignment='center', verticalalignment='center')
@@ -357,7 +321,7 @@ def visualize_samples(metadata_df, output_dir="sample_images", num_samples=5):
     # Save the grid of samples
     grid_path = os.path.join(output_dir, "sample_grid.png")
     plt.savefig(grid_path, dpi=150)
-    logger.info(f"Saved sample grid to {grid_path}")
+    thread_safe_log('info', f"Saved sample grid to {grid_path}")
     plt.close()
 
 
@@ -385,21 +349,25 @@ def compare_wear_progression(metadata_df, material, map_type="height", output_di
     ]
     
     if len(filtered_df) == 0:
-        logger.error(f"No images found for material={material}, map_type={map_type}")
+        thread_safe_log('error', f"No images found for material={material}, map_type={map_type}")
         return
     
     # Get unique distances for this material
     distances = sorted(filtered_df['distance_mm'].unique())
     
     if len(distances) <= 1:
-        logger.error(f"Not enough distance values for material={material} to show progression")
+        thread_safe_log('error', f"Not enough distance values for material={material} to show progression")
         return
     
-    logger.info(f"Comparing wear progression for {material} across {len(distances)} distances")
+    thread_safe_log('info', f"Comparing wear progression for {material} across {len(distances)} distances")
     
-    # For consistent comparison, try to use images with the same force value
-    force_values = filtered_df['force_value'].value_counts().index
-    selected_force = force_values[0]  # Use the most common force value
+    # For consistent comparison, try to use images with the same force/load value
+    force_col = 'force_value' if 'force_value' in filtered_df.columns else 'load_g'
+    if force_col in filtered_df.columns:
+        force_values = filtered_df[force_col].value_counts().index
+        selected_force = force_values[0]  # Use the most common force value
+    else:
+        selected_force = None
     
     # Create a grid of plots
     cols = min(4, len(distances))
@@ -417,17 +385,17 @@ def compare_wear_progression(metadata_df, material, map_type="height", output_di
     # Plot each distance
     for i, distance in enumerate(distances):
         # Get images for this distance
-        distance_df = filtered_df[
-            (filtered_df['distance_mm'] == distance) & 
-            (filtered_df['force_value'] == selected_force)
-        ]
+        distance_df = filtered_df[filtered_df['distance_mm'] == distance]
         
-        # If no images with the selected force, use any image at this distance
-        if len(distance_df) == 0:
-            distance_df = filtered_df[filtered_df['distance_mm'] == distance]
+        # Filter by force if applicable
+        if selected_force is not None and force_col in distance_df.columns:
+            force_filtered_df = distance_df[distance_df[force_col] == selected_force]
+            # If no images with the selected force, use any image at this distance
+            if len(force_filtered_df) > 0:
+                distance_df = force_filtered_df
         
         if len(distance_df) == 0:
-            logger.warning(f"No images found for distance={distance}mm")
+            thread_safe_log('warning', f"No images found for distance={distance}mm")
             continue
         
         # Use the first available image
@@ -435,8 +403,14 @@ def compare_wear_progression(metadata_df, material, map_type="height", output_di
         
         try:
             # Load the image
-            img_path = sample['file_path']
-            img = Image.open(img_path)
+            if 'file_path' in sample:
+                img_path = sample['file_path']
+                img = Image.open(img_path)
+            elif 'image_bytes' in sample:
+                from io import BytesIO
+                img = Image.open(BytesIO(sample['image_bytes']))
+            else:
+                raise ValueError("No image data or path available")
             
             # Plot the image
             ax = axes[i]
@@ -456,7 +430,7 @@ def compare_wear_progression(metadata_df, material, map_type="height", output_di
             img.save(img_path)
             
         except Exception as e:
-            logger.error(f"Error visualizing distance {distance}mm: {e}")
+            thread_safe_log('error', f"Error visualizing distance {distance}mm: {e}")
             ax = axes[i]
             ax.text(0.5, 0.5, f"Error: {distance}mm", 
                     horizontalalignment='center', verticalalignment='center')
@@ -472,13 +446,13 @@ def compare_wear_progression(metadata_df, material, map_type="height", output_di
     # Save the comparison grid
     comparison_path = os.path.join(output_dir, f"{material}_{map_type}_wear_progression.png")
     plt.savefig(comparison_path, dpi=150)
-    logger.info(f"Saved wear progression comparison to {comparison_path}")
+    thread_safe_log('info', f"Saved wear progression comparison to {comparison_path}")
     plt.close()
 
 
 if __name__ == "__main__":
     # Update this path for your specific setup
-    PARQUET_FILE = "friction_surfaces_metadata.parquet"
+    PARQUET_FILE = os.path.join("FrictionSurfacesDatasets_Parquet", "master_metadata.parquet")
     
     # Explore the Parquet dataset
     metadata_df = explore_parquet_dataset(PARQUET_FILE)
@@ -488,4 +462,24 @@ if __name__ == "__main__":
     
     # Compare wear progression for each material
     for material in metadata_df['material'].unique():
-        compare_wear_progression(metadata_df, material, "height")
+        # Try height map type first, fallback to others if needed
+        map_types = metadata_df['map_type'].unique()
+        preferred_map_types = ['height', 'displacement', 'normal', 'roughness']
+        
+        map_type_to_use = None
+        for preferred in preferred_map_types:
+            if preferred in map_types:
+                map_type_to_use = preferred
+                break
+        
+        if map_type_to_use is None and len(map_types) > 0:
+            map_type_to_use = map_types[0]
+        
+        if map_type_to_use:
+            compare_wear_progression(metadata_df, material, map_type_to_use)
+            
+        else:
+            thread_safe_log('warning', f"No suitable map types found for material={material}")
+            
+        # Optional: Add a delay between processing different materials
+        time.sleep(1)
