@@ -9,10 +9,10 @@ import time
 import datetime
 import logging
 import threading
-import queue
 import concurrent.futures
 from threading import Lock
 import io
+import shutil
 
 # Set up logging with thread safety
 logging.basicConfig(
@@ -38,22 +38,21 @@ def thread_safe_log(level, message):
         elif level == 'warning':
             logger.warning(message)
 
-def create_directory_parquet_datasets(root_dir, output_dir, max_workers=None):
+def create_parquet_dataset(root_dir, output_base_dir, max_workers=None):
     """
-    Create a separate Parquet file for each directory, with each file containing all images from that directory.
-    Uses threading for improved performance.
+    Create Parquet files for each test condition in the dataset.
     
     Parameters:
     -----------
     root_dir : str
         Root directory containing the image dataset
-    output_dir : str
-        Directory to store the output Parquet files
+    output_base_dir : str
+        Base directory to store the output Parquet structure
     max_workers : int, optional
         Maximum number of worker threads. If None, uses default based on system.
     """
     start_time = time.time()
-    thread_safe_log('info', f"Starting directory-based Parquet conversion at {datetime.datetime.now()}")
+    thread_safe_log('info', f"Starting Parquet conversion at {datetime.datetime.now()}")
     
     # If max_workers not specified, use a reasonable default (number of CPUs + 4)
     if max_workers is None:
@@ -62,14 +61,12 @@ def create_directory_parquet_datasets(root_dir, output_dir, max_workers=None):
     
     thread_safe_log('info', f"Using up to {max_workers} worker threads")
     
-    # Regular expressions to extract metadata from directory names
-    distance_pattern = re.compile(r'(\d+)mm')
-    load_pattern = re.compile(r'(\d+)g')
-    force_pattern = re.compile(r'_(\d+)_')  # For load values like 60, 120, 240
-    trial_pattern = re.compile(r'_(\d+)_heightmap')  # For trial numbers in Cartboard
+    # Create output base directory if it doesn't exist
+    os.makedirs(output_base_dir, exist_ok=True)
     
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
+    # Create Wear folder structure in output directory
+    wear_output_dir = os.path.join(output_base_dir, "Wear")
+    os.makedirs(wear_output_dir, exist_ok=True)
     
     # Master metadata to track all directories
     master_metadata = []
@@ -77,14 +74,22 @@ def create_directory_parquet_datasets(root_dir, output_dir, max_workers=None):
     
     # Statistics tracking with thread safety
     materials_lock = Lock()
+    surfaces_lock = Lock()
+    loads_lock = Lock()
     distances_lock = Lock()
-    forces_lock = Lock()
     materials_found = set()
+    surfaces_found = set()
+    loads_found = set()
     distances_found = set()
-    forces_found = set()
     
     # Gather all directories to process
     dirs_to_process = []
+    
+    # Extract S-value (grit) pattern
+    grit_pattern = re.compile(r'S(\d+)')
+    
+    # Extract load pattern
+    load_pattern = re.compile(r'(\d+)g')
     
     # Traverse the directory structure
     wear_path = os.path.join(root_dir, 'Wear')
@@ -97,91 +102,84 @@ def create_directory_parquet_datasets(root_dir, output_dir, max_workers=None):
         with materials_lock:
             materials_found.add(material_dir)
         
+        # Create material directory in output
+        material_output_dir = os.path.join(wear_output_dir, material_dir)
+        os.makedirs(material_output_dir, exist_ok=True)
+        
         thread_safe_log('info', f"Finding directories for material: {material_dir}")
         
-        # Process material directory based on its structure
-        if material_dir == 'Cartboard':
-            # Handle Cartboard with numbered trials
-            for trial_dir in os.listdir(material_path):
-                if trial_dir.isdigit():
-                    trial_num = int(trial_dir)
-                    trial_path = os.path.join(material_path, trial_dir)
-                    
-                    # Process each distance directory within the trial
-                    for distance_dir in os.listdir(trial_path):
-                        distance_path = os.path.join(trial_path, distance_dir)
-                        if not os.path.isdir(distance_path):
-                            continue
-                        
-                        # Extract metadata from directory name
-                        distance_match = distance_pattern.search(distance_dir)
-                        force_match = force_pattern.search(distance_dir)
-                        
-                        distance_mm = int(distance_match.group(1)) if distance_match else -1
-                        force_value = int(force_match.group(1)) if force_match else -1
-                        
-                        with distances_lock:
-                            distances_found.add(distance_mm)
-                        with forces_lock:
-                            forces_found.add(force_value)
-                        
-                        # Add this directory to the processing list
-                        dirs_to_process.append({
-                            'path': distance_path,
-                            'material': material_dir,
-                            'distance_mm': distance_mm,
-                            'force_value': force_value,
-                            'load_g': 0,
-                            'trial_number': trial_num,
-                            'directory_name': distance_dir,
-                            'parquet_name': f"{material_dir}_{distance_mm}mm_force{force_value}_trial{trial_num}.parquet"
-                        })
-        else:
-            # Handle MDF and PLA directories
-            for exp_dir in os.listdir(material_path):
-                exp_path = os.path.join(material_path, exp_dir)
-                if not os.path.isdir(exp_path):
+        # Process surface type directories (e.g., S40, Linear)
+        for surface_dir in os.listdir(material_path):
+            surface_path = os.path.join(material_path, surface_dir)
+            if not os.path.isdir(surface_path):
+                continue
+                
+            # Create surface directory in output
+            surface_output_dir = os.path.join(material_output_dir, surface_dir)
+            os.makedirs(surface_output_dir, exist_ok=True)
+            
+            # Extract surface properties (grit value)
+            grit_value = -1
+            grit_match = grit_pattern.search(surface_dir)
+            if grit_match:
+                grit_value = int(grit_match.group(1))
+            
+            with surfaces_lock:
+                surfaces_found.add(surface_dir)
+            
+            # Process load directories
+            for load_dir in os.listdir(surface_path):
+                load_path = os.path.join(surface_path, load_dir)
+                if not os.path.isdir(load_path):
                     continue
+                
+                # Create load directory in output
+                load_output_dir = os.path.join(surface_output_dir, load_dir)
+                os.makedirs(load_output_dir, exist_ok=True)
+                
+                # Extract load value
+                load_value = -1
+                load_match = load_pattern.search(load_dir)
+                if load_match:
+                    load_value = int(load_match.group(1))
+                
+                with loads_lock:
+                    loads_found.add(load_dir)
+                
+                # Process distance directories
+                for distance_dir in os.listdir(load_path):
+                    distance_path = os.path.join(load_path, distance_dir)
+                    if not os.path.isdir(distance_path):
+                        continue
                     
-                # Extract metadata from directory name
-                distance_match = distance_pattern.search(exp_dir)
-                load_match = load_pattern.search(exp_dir)
-                force_match = force_pattern.search(exp_dir)
-                
-                distance_mm = int(distance_match.group(1)) if distance_match else -1
-                load_value = int(load_match.group(1)) if load_match else -1
-                force_value = int(force_match.group(1)) if force_match else -1
-                
-                # Special case for PLA: extract the force value
-                if material_dir == 'PLA' and force_value == -1:
-                    # Try to find force values like "60", "120", "240" in the directory name
-                    force_parts = [part for part in exp_dir.split('_') if part.isdigit() and part not in ['0', '200', '400', '600', '800', '1000', '1200', '1400']]
-                    if force_parts:
-                        force_value = int(force_parts[0])
-                
-                with distances_lock:
-                    distances_found.add(distance_mm)
-                if force_value != -1:
-                    with forces_lock:
-                        forces_found.add(force_value)
-                
-                # Create a parquet file name based on the directory
-                if load_value > 0:
-                    parquet_name = f"{material_dir}_{distance_mm}mm_load{load_value}g_force{force_value}.parquet"
-                else:
-                    parquet_name = f"{material_dir}_{distance_mm}mm_force{force_value}.parquet"
-                
-                # Add this directory to the processing list
-                dirs_to_process.append({
-                    'path': exp_path,
-                    'material': material_dir,
-                    'distance_mm': distance_mm,
-                    'force_value': force_value,
-                    'load_g': load_value,
-                    'trial_number': -1,
-                    'directory_name': exp_dir,
-                    'parquet_name': parquet_name
-                })
+                    # Extract distance value
+                    distance_value = -1
+                    if distance_dir.endswith('mm'):
+                        try:
+                            distance_value = int(distance_dir[:-2])  # Remove 'mm' and convert to int
+                        except ValueError:
+                            pass
+                    
+                    with distances_lock:
+                        distances_found.add(distance_dir)
+                    
+                    # Create the output Parquet filename
+                    parquet_filename = f"{material_dir}_{surface_dir}_{load_dir}_{distance_dir}.parquet"
+                    parquet_path = os.path.join(load_output_dir, parquet_filename)
+                    
+                    # Add this directory to the processing list
+                    dirs_to_process.append({
+                        'path': distance_path,
+                        'material': material_dir,
+                        'surface': surface_dir,
+                        'grit': grit_value,
+                        'load_dir': load_dir,
+                        'load_g': load_value,
+                        'distance_dir': distance_dir,
+                        'distance_mm': distance_value,
+                        'parquet_path': parquet_path,
+                        'relative_path': os.path.join(material_dir, surface_dir, load_dir, distance_dir)
+                    })
     
     # Process directories using a thread pool
     thread_safe_log('info', f"Starting processing of {len(dirs_to_process)} directories using ThreadPoolExecutor")
@@ -195,13 +193,8 @@ def create_directory_parquet_datasets(root_dir, output_dir, max_workers=None):
             executor.submit(
                 process_directory_to_parquet,
                 dir_info['path'],
-                os.path.join(output_dir, dir_info['parquet_name']),
-                dir_info['material'],
-                dir_info['distance_mm'],
-                dir_info['force_value'],
-                dir_info['load_g'],
-                dir_info['trial_number'],
-                dir_info['directory_name'],
+                dir_info['parquet_path'],
+                dir_info,
                 master_metadata,
                 master_metadata_lock,
                 total_images_lock
@@ -216,43 +209,50 @@ def create_directory_parquet_datasets(root_dir, output_dir, max_workers=None):
                 num_processed, parquet_size = future.result()
                 with total_images_lock:
                     total_images += num_processed
-                thread_safe_log('info', f"Completed directory {dir_info['directory_name']} with {num_processed} images, Parquet size: {parquet_size:.2f} MB")
+                thread_safe_log('info', f"Completed directory {dir_info['relative_path']} with {num_processed} images, Parquet size: {parquet_size:.2f} MB")
             except Exception as e:
-                thread_safe_log('error', f"Error processing {dir_info['directory_name']}: {e}")
+                thread_safe_log('error', f"Error processing {dir_info['relative_path']}: {e}")
     
-    # Create master metadata file
+    # Create master metadata file in root output directory
     thread_safe_log('info', f"Creating master metadata file with {len(master_metadata)} directory records")
     master_df = pd.DataFrame(master_metadata)
     
     # Add dataset-level metadata
     master_df['dataset_info'] = 'Friction Surfaces Dataset'
     master_df['creation_date'] = datetime.datetime.now().isoformat()
-    master_df['total_images'] = total_images
     
     # Optimize categorical columns
-    for col in ['material', 'directory_name', 'parquet_file']:
+    for col in ['material', 'surface', 'load_dir', 'distance_dir', 'map_type']:
         if col in master_df.columns:
             master_df[col] = master_df[col].astype('category')
     
     # Write to parquet with compression
-    master_file = os.path.join(output_dir, "master_metadata.parquet")
+    master_file = os.path.join(output_base_dir, "master_metadata.parquet")
     thread_safe_log('info', f"Writing master metadata to {master_file}")
     table = pa.Table.from_pandas(master_df)
     pq.write_table(table, master_file, compression='snappy')
+    
+    # Copy README and LICENSE if they exist
+    for file_name in ['README.md', 'LICENSE']:
+        source_file = os.path.join(root_dir, file_name)
+        if os.path.exists(source_file):
+            dest_file = os.path.join(output_base_dir, file_name)
+            shutil.copy2(source_file, dest_file)
+            thread_safe_log('info', f"Copied {file_name} to output directory")
     
     elapsed_time = time.time() - start_time
     thread_safe_log('info', f"Parquet dataset creation completed successfully")
     thread_safe_log('info', f"Total processing time: {elapsed_time:.2f} seconds")
     thread_safe_log('info', f"Total images processed: {total_images}")
     thread_safe_log('info', f"Materials: {', '.join(materials_found)}")
-    thread_safe_log('info', f"Distance values (mm): {sorted(distances_found)}")
-    thread_safe_log('info', f"Force values: {sorted(forces_found)}")
+    thread_safe_log('info', f"Surfaces: {', '.join(surfaces_found)}")
+    thread_safe_log('info', f"Loads: {', '.join(sorted(loads_found, key=lambda x: int(x[:-1]) if x[:-1].isdigit() else 0))}")
+    thread_safe_log('info', f"Distances: {', '.join(sorted(distances_found, key=lambda x: int(x[:-2]) if x[:-2].isdigit() else 0))}")
     thread_safe_log('info', f"Master metadata file size: {os.path.getsize(master_file) / (1024*1024):.2f} MB")
 
 
-def process_directory_to_parquet(directory_path, output_file, material, distance_mm, force_value, 
-                               load_g, trial_number, directory_name, master_metadata, master_metadata_lock,
-                               total_images_lock):
+def process_directory_to_parquet(directory_path, output_file, metadata, 
+                              master_metadata, master_metadata_lock, total_images_lock):
     """
     Process a directory of images and save all images to a single Parquet file.
     
@@ -262,18 +262,8 @@ def process_directory_to_parquet(directory_path, output_file, material, distance
         Path to the directory containing images
     output_file : str
         Path to the output Parquet file
-    material : str
-        Material name (MDF, PLA, Cartboard)
-    distance_mm : int
-        Distance value in mm
-    force_value : int
-        Force value
-    load_g : int
-        Load value in grams
-    trial_number : int
-        Trial number (-1 if not applicable)
-    directory_name : str
-        Original directory name
+    metadata : dict
+        Dictionary containing metadata about this directory
     master_metadata : list
         List to store metadata about this directory
     master_metadata_lock : threading.Lock
@@ -287,10 +277,14 @@ def process_directory_to_parquet(directory_path, output_file, material, distance
         (Number of images processed, Parquet file size in MB)
     """
     thread_name = threading.current_thread().name
-    thread_safe_log('info', f"Thread {thread_name} processing directory: {directory_name}")
+    relative_path = metadata['relative_path']
+    thread_safe_log('info', f"Thread {thread_name} processing directory: {relative_path}")
     dir_start_time = time.time()
     
     try:
+        # Create output directory path if it doesn't exist
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        
         # Collect all image data and metadata
         all_images_data = []
         all_image_metadata = []
@@ -300,12 +294,19 @@ def process_directory_to_parquet(directory_path, output_file, material, distance
         png_files = [f for f in os.listdir(directory_path) if f.lower().endswith('.png')]
         
         for img_file in png_files:
-            # Extract map type (ao, bump, height, etc.)
-            map_type = img_file.split('_')[-1].split('.')[0]
+            # Try to extract map type from filename
+            map_type = None
+            if "_" in img_file:
+                # If file has format like 'something_maptype.png'
+                map_type = img_file.split('_')[-1].split('.')[0]
+            else:
+                # If file is just named like 'maptype.png'
+                map_type = img_file.split('.')[0]
+            
             map_types_in_dir.append(map_type)
             
             # Generate a unique ID for this image
-            image_id = f"{material}_{distance_mm}mm_{force_value}_{trial_number}_{map_type}"
+            image_id = f"{metadata['material']}_{metadata['surface']}_{metadata['load_dir']}_{metadata['distance_dir']}_{map_type}"
             
             # Load image to extract data and dimensions
             try:
@@ -342,17 +343,19 @@ def process_directory_to_parquet(directory_path, output_file, material, distance
                 # Store metadata
                 image_meta = {
                     'image_id': image_id,
-                    'material': material,
-                    'distance_mm': distance_mm,
-                    'force_value': force_value,
-                    'load_g': load_g,
-                    'trial_number': trial_number,
+                    'material': metadata['material'],
+                    'surface': metadata['surface'],
+                    'grit': metadata['grit'],
+                    'load_dir': metadata['load_dir'],
+                    'load_g': metadata['load_g'],
+                    'distance_dir': metadata['distance_dir'],
+                    'distance_mm': metadata['distance_mm'],
                     'map_type': map_type,
-                    'directory_name': directory_name,
                     'filename': img_file,
                     'width': width,
                     'height': height,
-                    'channels': channels
+                    'channels': channels,
+                    'parquet_path': os.path.relpath(output_file, output_file.split('Wear')[0])
                 }
                 all_image_metadata.append(image_meta)
                 
@@ -374,73 +377,25 @@ def process_directory_to_parquet(directory_path, output_file, material, distance
             
             # Add directory info to master metadata
             with master_metadata_lock:
-                master_metadata.append({
-                    'material': material,
-                    'distance_mm': distance_mm,
-                    'force_value': force_value,
-                    'load_g': load_g,
-                    'trial_number': trial_number,
-                    'directory_name': directory_name,
-                    'parquet_file': os.path.basename(output_file),
-                    'num_images': len(all_images_data),
-                    'map_types': ', '.join(sorted(set(map_types_in_dir))),
-                    'width': width,
-                    'height': height,
-                    'file_size_mb': file_size_mb
-                })
+                master_metadata.extend(all_image_metadata)
             
-            thread_safe_log('info', f"Thread {thread_name} finished {directory_name} in {dir_elapsed:.2f}s with {len(all_images_data)} images")
+            thread_safe_log('info', f"Thread {thread_name} finished {relative_path} in {dir_elapsed:.2f}s with {len(all_images_data)} images")
             return len(all_images_data), file_size_mb
         else:
-            thread_safe_log('warning', f"Thread {thread_name} found no valid images in {directory_name}")
+            thread_safe_log('warning', f"Thread {thread_name} found no valid images in {relative_path}")
             return 0, 0
         
     except Exception as e:
-        thread_safe_log('error', f"Thread {thread_name} encountered error in {directory_name}: {e}")
+        thread_safe_log('error', f"Thread {thread_name} encountered error in {relative_path}: {e}")
         return 0, 0
-
-
-def read_images_from_parquet(parquet_file):
-    """
-    Read images from a Parquet file.
-    
-    Parameters:
-    -----------
-    parquet_file : str
-        Path to the Parquet file
-    
-    Returns:
-    --------
-    dict
-        Dictionary mapping image_id to PIL Image
-    """
-    # Read the Parquet file
-    df = pd.read_parquet(parquet_file)
-    
-    # Dictionary to hold all images
-    images = {}
-    
-    # Process each row
-    for _, row in df.iterrows():
-        try:
-            # Convert bytes back to image
-            img_bytes = row['image_bytes']
-            img = Image.open(io.BytesIO(img_bytes))
-            
-            # Store in dictionary with image_id as key
-            images[row['image_id']] = img
-        except Exception as e:
-            logger.error(f"Error reading image {row['image_id']}: {e}")
-    
-    return images
 
 
 if __name__ == "__main__":
     # Update these paths for your specific setup
     ROOT_DIR = "."  # Current directory, change as needed
-    OUTPUT_DIR = "parquet_by_directory"
+    OUTPUT_DIR = "FrictionSurfacesDatasets_Parquet"
     
     # Use 16 worker threads - adjust based on your system
     MAX_WORKERS = 16
     
-    create_directory_parquet_datasets(ROOT_DIR, OUTPUT_DIR, MAX_WORKERS)
+    create_parquet_dataset(ROOT_DIR, OUTPUT_DIR, MAX_WORKERS)
