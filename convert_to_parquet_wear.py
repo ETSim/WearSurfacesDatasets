@@ -1,5 +1,4 @@
 import os
-import re
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -13,13 +12,15 @@ import concurrent.futures
 from threading import Lock
 import io
 import shutil
+import json
+from tqdm import tqdm
 
 # Set up logging with thread safety
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(threadName)s - %(message)s',
     handlers=[
-        logging.FileHandler('parquet_conversion.log'),
+        logging.FileHandler('image_extraction.log'),
         logging.StreamHandler()
     ]
 )
@@ -38,21 +39,60 @@ def thread_safe_log(level, message):
         elif level == 'warning':
             logger.warning(message)
 
-def create_parquet_dataset(root_dir, output_base_dir, max_workers=None):
+def load_master_metadata(parquet_dir):
     """
-    Create Parquet files for each test condition in the dataset.
+    Load and return master metadata from parquet file
+    """
+    master_metadata_path = os.path.join(parquet_dir, "master_metadata.parquet")
+    if not os.path.exists(master_metadata_path):
+        thread_safe_log('error', f"Master metadata file not found at {master_metadata_path}")
+        return None
+    
+    # Load master metadata
+    thread_safe_log('info', f"Loading master metadata from {master_metadata_path}")
+    try:
+        master_df = pd.read_parquet(master_metadata_path)
+        thread_safe_log('info', f"Master metadata contains {len(master_df)} image records")
+        return master_df
+    except Exception as e:
+        thread_safe_log('error', f"Failed to load master metadata: {e}")
+        return None
+
+def load_dataset_json_metadata(parquet_dir):
+    """
+    Load the JSON metadata file containing dataset information
+    """
+    metadata_path = os.path.join(parquet_dir, "metadata.json")
+    if not os.path.exists(metadata_path):
+        thread_safe_log('warning', f"Dataset metadata JSON not found at {metadata_path}")
+        return None
+    
+    try:
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        thread_safe_log('info', f"Loaded dataset metadata JSON successfully")
+        return metadata
+    except Exception as e:
+        thread_safe_log('error', f"Failed to load dataset metadata JSON: {e}")
+        return None
+
+def extract_images_from_parquet(parquet_dir, output_base_dir, max_workers=None, progress_bar=True):
+    """
+    Extract images from Parquet files back to their original directory structure.
     
     Parameters:
     -----------
-    root_dir : str
-        Root directory containing the image dataset
+    parquet_dir : str
+        Root directory containing the Parquet dataset
     output_base_dir : str
-        Base directory to store the output Parquet structure
+        Base directory to store the extracted images
     max_workers : int, optional
         Maximum number of worker threads. If None, uses default based on system.
+    progress_bar : bool, optional
+        Whether to display progress bars for extraction
     """
     start_time = time.time()
-    thread_safe_log('info', f"Starting Parquet conversion at {datetime.datetime.now()}")
+    thread_safe_log('info', f"Starting image extraction at {datetime.datetime.now()}")
     
     # If max_workers not specified, use a reasonable default (number of CPUs + 4)
     if max_workers is None:
@@ -64,338 +104,397 @@ def create_parquet_dataset(root_dir, output_base_dir, max_workers=None):
     # Create output base directory if it doesn't exist
     os.makedirs(output_base_dir, exist_ok=True)
     
+    # Load master metadata
+    master_df = load_master_metadata(parquet_dir)
+    if master_df is None:
+        return
+    
+    # Load JSON metadata
+    json_metadata = load_dataset_json_metadata(parquet_dir)
+    
     # Create Wear folder structure in output directory
     wear_output_dir = os.path.join(output_base_dir, "Wear")
     os.makedirs(wear_output_dir, exist_ok=True)
     
-    # Master metadata to track all directories
-    master_metadata = []
-    master_metadata_lock = Lock()
+    # Get unique parquet files to process
+    parquet_files = master_df['parquet_path'].unique()
+    thread_safe_log('info', f"Found {len(parquet_files)} unique Parquet files to process")
     
     # Statistics tracking with thread safety
-    materials_lock = Lock()
-    surfaces_lock = Lock()
-    loads_lock = Lock()
-    distances_lock = Lock()
-    materials_found = set()
-    surfaces_found = set()
-    loads_found = set()
-    distances_found = set()
-    
-    # Gather all directories to process
-    dirs_to_process = []
-    
-    # Extract S-value (grit) pattern
-    grit_pattern = re.compile(r'S(\d+)')
-    
-    # Extract load pattern
-    load_pattern = re.compile(r'(\d+)g')
-    
-    # Traverse the directory structure
-    wear_path = os.path.join(root_dir, 'Wear')
-    for material_dir in os.listdir(wear_path):
-        # Skip non-directories and hidden files
-        material_path = os.path.join(wear_path, material_dir)
-        if not os.path.isdir(material_path) or material_dir.startswith('.'):
-            continue
-            
-        with materials_lock:
-            materials_found.add(material_dir)
-        
-        # Create material directory in output
-        material_output_dir = os.path.join(wear_output_dir, material_dir)
-        os.makedirs(material_output_dir, exist_ok=True)
-        
-        thread_safe_log('info', f"Finding directories for material: {material_dir}")
-        
-        # Process surface type directories (e.g., S40, Linear)
-        for surface_dir in os.listdir(material_path):
-            surface_path = os.path.join(material_path, surface_dir)
-            if not os.path.isdir(surface_path):
-                continue
-                
-            # Create surface directory in output
-            surface_output_dir = os.path.join(material_output_dir, surface_dir)
-            os.makedirs(surface_output_dir, exist_ok=True)
-            
-            # Extract surface properties (grit value)
-            grit_value = -1
-            grit_match = grit_pattern.search(surface_dir)
-            if grit_match:
-                grit_value = int(grit_match.group(1))
-            
-            with surfaces_lock:
-                surfaces_found.add(surface_dir)
-            
-            # Process load directories
-            for load_dir in os.listdir(surface_path):
-                load_path = os.path.join(surface_path, load_dir)
-                if not os.path.isdir(load_path):
-                    continue
-                
-                # Create load directory in output
-                load_output_dir = os.path.join(surface_output_dir, load_dir)
-                os.makedirs(load_output_dir, exist_ok=True)
-                
-                # Extract load value
-                load_value = -1
-                load_match = load_pattern.search(load_dir)
-                if load_match:
-                    load_value = int(load_match.group(1))
-                
-                with loads_lock:
-                    loads_found.add(load_dir)
-                
-                # Process distance directories
-                for distance_dir in os.listdir(load_path):
-                    distance_path = os.path.join(load_path, distance_dir)
-                    if not os.path.isdir(distance_path):
-                        continue
-                    
-                    # Extract distance value
-                    distance_value = -1
-                    if distance_dir.endswith('mm'):
-                        try:
-                            distance_value = int(distance_dir[:-2])  # Remove 'mm' and convert to int
-                        except ValueError:
-                            pass
-                    
-                    with distances_lock:
-                        distances_found.add(distance_dir)
-                    
-                    # Create the output Parquet filename
-                    parquet_filename = f"{material_dir}_{surface_dir}_{load_dir}_{distance_dir}.parquet"
-                    parquet_path = os.path.join(load_output_dir, parquet_filename)
-                    
-                    # Add this directory to the processing list
-                    dirs_to_process.append({
-                        'path': distance_path,
-                        'material': material_dir,
-                        'surface': surface_dir,
-                        'grit': grit_value,
-                        'load_dir': load_dir,
-                        'load_g': load_value,
-                        'distance_dir': distance_dir,
-                        'distance_mm': distance_value,
-                        'parquet_path': parquet_path,
-                        'relative_path': os.path.join(material_dir, surface_dir, load_dir, distance_dir)
-                    })
-    
-    # Process directories using a thread pool
-    thread_safe_log('info', f"Starting processing of {len(dirs_to_process)} directories using ThreadPoolExecutor")
-    
     total_images = 0
     total_images_lock = Lock()
     
+    # Process Parquet files using a thread pool
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all processing tasks
         futures = {
             executor.submit(
-                process_directory_to_parquet,
-                dir_info['path'],
-                dir_info['parquet_path'],
-                dir_info,
-                master_metadata,
-                master_metadata_lock,
-                total_images_lock
-            ): dir_info for dir_info in dirs_to_process
+                process_parquet_to_images,
+                os.path.join(parquet_dir, parquet_path.lstrip('/')),
+                output_base_dir,
+                master_df[master_df['parquet_path'] == parquet_path],
+                total_images_lock,
+                progress_bar
+            ): parquet_path for parquet_path in parquet_files
         }
         
         # Process completed futures as they finish
         for future in concurrent.futures.as_completed(futures):
-            dir_info = futures[future]
+            parquet_path = futures[future]
             try:
                 # Each completed future returns the number of images processed
-                num_processed, parquet_size = future.result()
+                num_processed = future.result()
                 with total_images_lock:
                     total_images += num_processed
-                thread_safe_log('info', f"Completed directory {dir_info['relative_path']} with {num_processed} images, Parquet size: {parquet_size:.2f} MB")
+                thread_safe_log('info', f"Completed processing Parquet file {parquet_path} with {num_processed} images")
             except Exception as e:
-                thread_safe_log('error', f"Error processing {dir_info['relative_path']}: {e}")
+                thread_safe_log('error', f"Error processing {parquet_path}: {e}")
     
-    # Create master metadata file in root output directory
-    thread_safe_log('info', f"Creating master metadata file with {len(master_metadata)} directory records")
-    master_df = pd.DataFrame(master_metadata)
-    
-    # Add dataset-level metadata
-    master_df['dataset_info'] = 'Friction Surfaces Dataset'
-    master_df['creation_date'] = datetime.datetime.now().isoformat()
-    
-    # Optimize categorical columns
-    for col in ['material', 'surface', 'load_dir', 'distance_dir', 'map_type']:
-        if col in master_df.columns:
-            master_df[col] = master_df[col].astype('category')
-    
-    # Write to parquet with compression
-    master_file = os.path.join(output_base_dir, "master_metadata.parquet")
-    thread_safe_log('info', f"Writing master metadata to {master_file}")
-    table = pa.Table.from_pandas(master_df)
-    pq.write_table(table, master_file, compression='snappy')
+    # Generate and save material-specific metadata
+    if json_metadata:
+        thread_safe_log('info', "Generating material-specific metadata files")
+        generate_material_metadata_files(json_metadata, output_base_dir)
     
     # Copy README and LICENSE if they exist
     for file_name in ['README.md', 'LICENSE']:
-        source_file = os.path.join(root_dir, file_name)
+        source_file = os.path.join(parquet_dir, file_name)
         if os.path.exists(source_file):
             dest_file = os.path.join(output_base_dir, file_name)
             shutil.copy2(source_file, dest_file)
             thread_safe_log('info', f"Copied {file_name} to output directory")
     
+    # Generate comprehensive dataset report
+    generate_dataset_report(master_df, json_metadata, output_base_dir, total_images)
+    
     elapsed_time = time.time() - start_time
-    thread_safe_log('info', f"Parquet dataset creation completed successfully")
+    thread_safe_log('info', f"Image extraction completed successfully")
     thread_safe_log('info', f"Total processing time: {elapsed_time:.2f} seconds")
-    thread_safe_log('info', f"Total images processed: {total_images}")
-    thread_safe_log('info', f"Materials: {', '.join(materials_found)}")
-    thread_safe_log('info', f"Surfaces: {', '.join(surfaces_found)}")
-    thread_safe_log('info', f"Loads: {', '.join(sorted(loads_found, key=lambda x: int(x[:-1]) if x[:-1].isdigit() else 0))}")
-    thread_safe_log('info', f"Distances: {', '.join(sorted(distances_found, key=lambda x: int(x[:-2]) if x[:-2].isdigit() else 0))}")
-    thread_safe_log('info', f"Master metadata file size: {os.path.getsize(master_file) / (1024*1024):.2f} MB")
+    thread_safe_log('info', f"Total images extracted: {total_images}")
 
 
-def process_directory_to_parquet(directory_path, output_file, metadata, 
-                              master_metadata, master_metadata_lock, total_images_lock):
+def process_parquet_to_images(parquet_file, output_base_dir, metadata_df, total_images_lock, progress_bar=True):
     """
-    Process a directory of images and save all images to a single Parquet file.
+    Process a Parquet file and extract images to their original directory structure.
     
     Parameters:
     -----------
-    directory_path : str
-        Path to the directory containing images
-    output_file : str
-        Path to the output Parquet file
-    metadata : dict
-        Dictionary containing metadata about this directory
-    master_metadata : list
-        List to store metadata about this directory
-    master_metadata_lock : threading.Lock
-        Lock for thread-safe metadata updates
+    parquet_file : str
+        Path to the Parquet file containing image data
+    output_base_dir : str
+        Base directory to extract images to
+    metadata_df : pandas.DataFrame
+        DataFrame containing metadata for images in this Parquet file
     total_images_lock : threading.Lock
         Lock for thread-safe image counting
+    progress_bar : bool
+        Whether to show progress bar for this file processing
     
     Returns:
     --------
-    tuple
-        (Number of images processed, Parquet file size in MB)
+    int
+        Number of images processed
     """
     thread_name = threading.current_thread().name
-    relative_path = metadata['relative_path']
-    thread_safe_log('info', f"Thread {thread_name} processing directory: {relative_path}")
+    thread_safe_log('info', f"Thread {thread_name} processing Parquet file: {parquet_file}")
     dir_start_time = time.time()
     
     try:
-        # Create output directory path if it doesn't exist
-        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        # Check if Parquet file exists
+        if not os.path.exists(parquet_file):
+            thread_safe_log('error', f"Parquet file not found: {parquet_file}")
+            return 0
         
-        # Collect all image data and metadata
-        all_images_data = []
-        all_image_metadata = []
-        map_types_in_dir = []
+        # Load Parquet file
+        df = pd.read_parquet(parquet_file)
+        thread_safe_log('info', f"Loaded Parquet file with {len(df)} images")
         
-        # Find all PNG files in the directory
-        png_files = [f for f in os.listdir(directory_path) if f.lower().endswith('.png')]
+        # Extract images
+        images_processed = 0
         
-        for img_file in png_files:
-            # Try to extract map type from filename
-            map_type = None
-            if "_" in img_file:
-                # If file has format like 'something_maptype.png'
-                map_type = img_file.split('_')[-1].split('.')[0]
-            else:
-                # If file is just named like 'maptype.png'
-                map_type = img_file.split('.')[0]
-            
-            map_types_in_dir.append(map_type)
-            
-            # Generate a unique ID for this image
-            image_id = f"{metadata['material']}_{metadata['surface']}_{metadata['load_dir']}_{metadata['distance_dir']}_{map_type}"
-            
-            # Load image to extract data and dimensions
+        # Create iterator with optional progress bar
+        if progress_bar:
+            iterator = tqdm(df.iterrows(), total=len(df), desc=f"Processing {os.path.basename(parquet_file)}")
+        else:
+            iterator = df.iterrows()
+        
+        for _, row in iterator:
             try:
-                img_path = os.path.join(directory_path, img_file)
-                img = Image.open(img_path)
-                width, height = img.size
+                # Get image metadata
+                image_id = row['image_id']
+                image_bytes = row['image_bytes']
                 
-                # Determine number of channels
-                if img.mode == 'RGB':
-                    channels = 3
-                elif img.mode == 'RGBA':
-                    channels = 4
-                elif img.mode in ['L', '1']:
-                    channels = 1
-                else:
-                    channels = -1  # Unknown
+                # Get corresponding metadata row
+                meta_row = metadata_df[metadata_df['image_id'] == image_id]
+                if len(meta_row) == 0:
+                    thread_safe_log('warning', f"No metadata found for image ID: {image_id}")
+                    continue
                 
-                # Convert image to bytes
-                img_buffer = io.BytesIO()
-                img.save(img_buffer, format='PNG')
-                img_bytes = img_buffer.getvalue()
+                # Extract metadata
+                material = meta_row['material'].iloc[0]
+                surface = meta_row['surface'].iloc[0]
+                load_dir = meta_row['load_dir'].iloc[0]
+                distance_dir = meta_row['distance_dir'].iloc[0]
+                map_type = meta_row['map_type'].iloc[0]
+                filename = meta_row['filename'].iloc[0]
                 
-                # Store image data
-                image_data = {
-                    'image_id': image_id,
-                    'map_type': map_type,
-                    'width': width,
-                    'height': height,
-                    'channels': channels,
-                    'image_bytes': img_bytes
-                }
-                all_images_data.append(image_data)
+                # Create output directory structure
+                output_dir = os.path.join(output_base_dir, "Wear", material, surface, load_dir, distance_dir)
+                os.makedirs(output_dir, exist_ok=True)
                 
-                # Store metadata
-                image_meta = {
-                    'image_id': image_id,
-                    'material': metadata['material'],
-                    'surface': metadata['surface'],
-                    'grit': metadata['grit'],
-                    'load_dir': metadata['load_dir'],
-                    'load_g': metadata['load_g'],
-                    'distance_dir': metadata['distance_dir'],
-                    'distance_mm': metadata['distance_mm'],
-                    'map_type': map_type,
-                    'filename': img_file,
-                    'width': width,
-                    'height': height,
-                    'channels': channels,
-                    'parquet_path': os.path.relpath(output_file, output_file.split('Wear')[0])
-                }
-                all_image_metadata.append(image_meta)
+                # Create output file path
+                output_file = os.path.join(output_dir, filename)
+                
+                # Convert bytes to image and save
+                img = Image.open(io.BytesIO(image_bytes))
+                img.save(output_file, optimize=True)  # Added optimize for better file size
+                
+                # Create local JSON metadata if this is a height map
+                if map_type == 'height' and 'metadata.json' not in os.listdir(output_dir):
+                    create_local_metadata(meta_row, output_dir)
+                
+                images_processed += 1
                 
             except Exception as e:
-                thread_safe_log('error', f"Thread {thread_name} error processing {img_file}: {e}")
+                thread_safe_log('error', f"Error extracting image {image_id}: {e}")
         
-        # Create DataFrame and save to Parquet
-        if all_images_data:
-            # Create DataFrame with all image data
-            df = pd.DataFrame(all_images_data)
+        dir_elapsed = time.time() - dir_start_time
+        thread_safe_log('info', f"Thread {thread_name} extracted {images_processed} images in {dir_elapsed:.2f}s")
+        
+        with total_images_lock:
+            return images_processed
             
-            # Save as Parquet
-            table = pa.Table.from_pandas(df)
-            pq.write_table(table, output_file, compression='snappy')
+    except Exception as e:
+        thread_safe_log('error', f"Thread {thread_name} encountered error processing {parquet_file}: {e}")
+        return 0
+
+
+def create_local_metadata(meta_row, output_dir):
+    """
+    Create local metadata.json file in the specific sample directory
+    """
+    try:
+        # Extract data from meta_row
+        material = meta_row['material'].iloc[0]
+        surface = meta_row['surface'].iloc[0]
+        load = meta_row['load_dir'].iloc[0]
+        distance = meta_row['distance_dir'].iloc[0]
+        
+        # Create local metadata object
+        local_meta = {
+            "sampleInfo": {
+                "material": material,
+                "surface": surface,
+                "load": load,
+                "distanceTraveled": distance,
+                "captureDate": meta_row['capture_date'].iloc[0] if 'capture_date' in meta_row else None,
+                "sampleId": meta_row['sample_id'].iloc[0] if 'sample_id' in meta_row else None
+            },
+            "processingInfo": {
+                "extractedDate": datetime.datetime.now().isoformat(),
+                "software": "Friction Surface Dataset Extractor",
+                "version": "2.0.0"
+            }
+        }
+        
+        # Save to file
+        metadata_file = os.path.join(output_dir, "metadata.json")
+        with open(metadata_file, 'w') as f:
+            json.dump(local_meta, f, indent=2)
             
-            # Log completion
-            file_size_mb = os.path.getsize(output_file) / (1024 * 1024)
-            dir_elapsed = time.time() - dir_start_time
+    except Exception as e:
+        thread_safe_log('error', f"Error creating local metadata: {e}")
+
+
+def generate_material_metadata_files(json_metadata, output_base_dir):
+    """
+    Generate material-specific metadata files for each material in the dataset
+    """
+    if not json_metadata or 'materialProfiles' not in json_metadata:
+        return
+    
+    wear_dir = os.path.join(output_base_dir, "Wear")
+    
+    for material, material_data in json_metadata['materialProfiles'].items():
+        material_dir = os.path.join(wear_dir, material)
+        if os.path.exists(material_dir):
+            metadata_file = os.path.join(material_dir, "metadata.json")
+            try:
+                with open(metadata_file, 'w') as f:
+                    json.dump(material_data, f, indent=2)
+                thread_safe_log('info', f"Created material metadata for {material}")
+            except Exception as e:
+                thread_safe_log('error', f"Error creating metadata for {material}: {e}")
+
+
+def generate_dataset_report(master_df, json_metadata, output_base_dir, total_images):
+    """
+    Generate a comprehensive dataset report with statistics and visualization examples
+    """
+    try:
+        # Generate summary statistics
+        materials = master_df['material'].unique()
+        surfaces = master_df['surface'].unique()
+        loads = master_df['load_dir'].unique()
+        distances = master_df['distance_dir'].unique()
+        map_types = master_df['map_type'].unique()
+        
+        # Create detailed report with counts per category
+        report = {
+            'datasetSummary': {
+                'totalImages': total_images,
+                'totalMaterials': len(materials),
+                'totalSurfaces': len(surfaces),
+                'totalLoads': len(loads),
+                'totalDistances': len(distances),
+                'totalMapTypes': len(map_types),
+                'generationDate': datetime.datetime.now().isoformat()
+            },
+            'materialStats': {},
+            'surfaceStats': {},
+            'loadStats': {},
+            'distanceStats': {},
+            'mapTypeStats': {}
+        }
+        
+        # Count images per material
+        for material in materials:
+            count = len(master_df[master_df['material'] == material])
+            report['materialStats'][material] = count
             
-            # Add directory info to master metadata
-            with master_metadata_lock:
-                master_metadata.extend(all_image_metadata)
+        # Count images per surface
+        for surface in surfaces:
+            count = len(master_df[master_df['surface'] == surface])
+            report['surfaceStats'][surface] = count
             
-            thread_safe_log('info', f"Thread {thread_name} finished {relative_path} in {dir_elapsed:.2f}s with {len(all_images_data)} images")
-            return len(all_images_data), file_size_mb
-        else:
-            thread_safe_log('warning', f"Thread {thread_name} found no valid images in {relative_path}")
-            return 0, 0
+        # Count images per load
+        for load in loads:
+            count = len(master_df[master_df['load_dir'] == load])
+            report['loadStats'][load] = count
+            
+        # Count images per distance
+        for distance in distances:
+            count = len(master_df[master_df['distance_dir'] == distance])
+            report['distanceStats'][distance] = count
+            
+        # Count images per map type
+        for map_type in map_types:
+            count = len(master_df[master_df['map_type'] == map_type])
+            report['mapTypeStats'][map_type] = count
+            
+        # Add metadata if available
+        if json_metadata:
+            report['datasetInfo'] = json_metadata.get('datasetInfo', {})
+            report['mapDescriptions'] = json_metadata.get('mapTypes', {})
+            
+        # Save detailed report as JSON
+        report_path = os.path.join(output_base_dir, "dataset_report.json")
+        with open(report_path, 'w') as f:
+            json.dump(report, f, indent=4)
+            
+        # Create a human-readable markdown report
+        create_markdown_report(report, json_metadata, output_base_dir)
+        
+        thread_safe_log('info', f"Generated comprehensive dataset report")
         
     except Exception as e:
-        thread_safe_log('error', f"Thread {thread_name} encountered error in {relative_path}: {e}")
-        return 0, 0
+        thread_safe_log('error', f"Error generating dataset report: {e}")
+
+
+def create_markdown_report(report, json_metadata, output_base_dir):
+    """Create a human-readable markdown report from the dataset statistics"""
+    
+    report_path = os.path.join(output_base_dir, "README.md")
+    
+    with open(report_path, 'w') as f:
+        # Title and introduction
+        f.write("# Friction Surfaces Dataset\n\n")
+        
+        if json_metadata and 'datasetInfo' in json_metadata:
+            f.write(f"## Dataset Description\n\n")
+            f.write(f"{json_metadata['datasetInfo'].get('description', 'Surface texture dataset')}\n\n")
+        
+        # Summary statistics
+        f.write("## Dataset Statistics\n\n")
+        f.write(f"- **Total Images**: {report['datasetSummary']['totalImages']}\n")
+        f.write(f"- **Materials**: {report['datasetSummary']['totalMaterials']}\n")
+        f.write(f"- **Surface Types**: {report['datasetSummary']['totalSurfaces']}\n")
+        f.write(f"- **Load Conditions**: {report['datasetSummary']['totalLoads']}\n")
+        f.write(f"- **Distance Measurements**: {report['datasetSummary']['totalDistances']}\n")
+        f.write(f"- **Map Types**: {report['datasetSummary']['totalMapTypes']}\n\n")
+        
+        # Materials
+        f.write("## Materials\n\n")
+        for material, count in report['materialStats'].items():
+            f.write(f"### {material} ({count} images)\n\n")
+            if json_metadata and 'materialProfiles' in json_metadata and material in json_metadata['materialProfiles']:
+                material_info = json_metadata['materialProfiles'][material]
+                if 'materialProperties' in material_info:
+                    props = material_info['materialProperties']
+                    f.write(f"**Name**: {props.get('name', material)}\n\n")
+                    f.write(f"**Type**: {props.get('type', 'Not specified')}\n\n")
+                    f.write(f"**Description**: {props.get('description', 'Not provided')}\n\n")
+                    
+                    if 'physicalProperties' in props:
+                        f.write("**Physical Properties**:\n\n")
+                        for prop, value in props['physicalProperties'].items():
+                            f.write(f"- {prop.capitalize()}: {value}\n")
+                        f.write("\n")
+        
+        # Map Types
+        f.write("## Map Types\n\n")
+        for map_type, count in report['mapTypeStats'].items():
+            f.write(f"### {map_type} ({count} images)\n\n")
+            if json_metadata and 'mapTypes' in json_metadata and map_type in json_metadata['mapTypes']:
+                map_info = json_metadata['mapTypes'][map_type]
+                f.write(f"**Name**: {map_info.get('name', map_type)}\n\n")
+                f.write(f"**Description**: {map_info.get('description', 'Not provided')}\n\n")
+                f.write(f"**Format**: {map_info.get('dataFormat', 'Not specified')}\n\n")
+                f.write(f"**Usage**: {map_info.get('renderingUsage', 'Not specified')}\n\n")
+        
+        # Directory Structure
+        f.write("## Directory Structure\n\n")
+        f.write("```\n")
+        f.write("Wear/\n")
+        f.write("└── [Material]/\n")
+        f.write("    └── [Surface]/\n")
+        f.write("        └── [Load]/\n")
+        f.write("            └── [Distance]/\n")
+        f.write("                ├── ao.png\n")
+        f.write("                ├── bump.png\n")
+        f.write("                ├── displacement.png\n")
+        f.write("                ├── height.png\n")
+        f.write("                ├── hillshade.png\n")
+        f.write("                ├── metadata.json\n")
+        f.write("                ├── metallic.png\n")
+        f.write("                ├── normal.png\n")
+        f.write("                └── roughness.png\n")
+        f.write("```\n\n")
+        
+        # Generation information
+        f.write(f"## Report Generation\n\n")
+        f.write(f"This report was automatically generated on {report['datasetSummary']['generationDate']}.\n")
 
 
 if __name__ == "__main__":
-    # Update these paths for your specific setup
-    ROOT_DIR = "."  # Current directory, change as needed
-    OUTPUT_DIR = "FrictionSurfacesDatasets_Parquet"
+    import argparse
     
-    # Use 16 worker threads - adjust based on your system
-    MAX_WORKERS = 16
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Extract friction surfaces dataset from Parquet format')
+    parser.add_argument('--parquet-dir', type=str, default="FrictionSurfacesDatasets_Parquet", 
+                        help='Directory with Parquet dataset')
+    parser.add_argument('--output-dir', type=str, default="ExtractedFrictionSurfacesDataset", 
+                        help='Output directory for extracted images')
+    parser.add_argument('--workers', type=int, default=None, 
+                        help='Number of worker threads (default: CPU count + 4)')
+    parser.add_argument('--no-progress', action='store_true', 
+                        help='Disable progress bars')
     
-    create_parquet_dataset(ROOT_DIR, OUTPUT_DIR, MAX_WORKERS)
+    args = parser.parse_args()
+    
+    # Extract images
+    extract_images_from_parquet(
+        args.parquet_dir, 
+        args.output_dir, 
+        max_workers=args.workers,
+        progress_bar=not args.no_progress
+    )
