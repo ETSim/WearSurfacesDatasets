@@ -8,7 +8,6 @@ import base64
 import pandas as pd
 from PIL import Image
 from rich.progress import Progress, TextColumn, BarColumn, TimeElapsedColumn, TimeRemainingColumn
-from tqdm import tqdm
 import typer
 
 app = typer.Typer(help="Extract images from Friction Surfaces Parquet files or decompress WebDataset shards.")
@@ -23,7 +22,6 @@ def read_parquet_metadata(parquet_dir: str) -> pd.DataFrame:
     
     Args:
         parquet_dir: Directory where metadata.parquet is located.
-        
     Returns:
         A DataFrame with metadata or None if not found.
     """
@@ -40,7 +38,6 @@ def copy_image(row: pd.Series, dest_path: str) -> bool:
     Args:
         row: A pandas Series containing image metadata and raw binary image data.
         dest_path: The destination file path where the image will be saved.
-    
     Returns:
         True if the image is saved successfully; otherwise, False.
     """
@@ -90,8 +87,9 @@ def extract_images(df: pd.DataFrame, output_dir: str, workers: int = 8) -> None:
                     image_type = row['image_type']
                     dest_file = os.path.join(dest_dir, f"{image_type}.png")
                     futures.append(executor.submit(copy_image, row, dest_file))
+            # Update progress as each future completes:
             for future in concurrent.futures.as_completed(futures):
-                future.result()  # Catch exceptions if any.
+                future.result()  # Capture any exceptions.
                 progress.update(extract_task, advance=1)
     typer.echo(f"Extracted {total_images} images to {output_dir}")
 
@@ -151,7 +149,7 @@ def extract_images_by_query(material: str = None, grit: str = None, weight: str 
     extract_images(combined_df, output_dir, workers)
 
 #########################################
-# WEBDATASET SHARD DECOMPRESSION FUNCTION
+# WEBDATASET SHARD DECOMPRESSION BLOCK  #
 #########################################
 
 def decompress_webdataset(input_dir: str, output_dir: str, workers: int = 8) -> None:
@@ -159,8 +157,8 @@ def decompress_webdataset(input_dir: str, output_dir: str, workers: int = 8) -> 
     Decompress WebDataset shards (tar files) into a folder structure based on JSON metadata.
     
     For each tar shard in input_dir, this function extracts pairs of files:
-    `<key>.jpg` and `<key>.json`. The JSON file should contain keys such as
-    'material', 'grit', 'weight', 'distance', and 'image_type' to define the output structure.
+    <key>.jpg and <key>.json. The JSON file should contain keys such as 'material',
+    'grit', 'weight', 'distance', and 'image_type' to define the output structure.
     
     Args:
         input_dir: Directory containing WebDataset tar files.
@@ -174,51 +172,61 @@ def decompress_webdataset(input_dir: str, output_dir: str, workers: int = 8) -> 
 
     os.makedirs(output_dir, exist_ok=True)
     
-    def process_shard(tar_path: str):
-        with tarfile.open(tar_path, 'r') as tar:
-            members = tar.getmembers()
-            # Group members by key (assume filenames like 000001.jpg and 000001.json)
-            samples = {}
-            for member in members:
-                key, ext = os.path.splitext(member.name)
-                if key not in samples:
-                    samples[key] = {}
-                samples[key][ext] = member
-            for key, files in samples.items():
-                if ".json" in files and ".jpg" in files:
-                    json_file = tar.extractfile(files[".json"])
-                    if not json_file:
-                        continue
-                    try:
-                        meta = json.load(json_file)
-                    except Exception as e:
-                        typer.echo(f"Error parsing JSON in {files['.json'].name}: {e}")
-                        continue
-                    # Use metadata to determine destination folder.
-                    material = meta.get("material", "unknown")
-                    grit = meta.get("grit", "unknown")
-                    weight = meta.get("weight", "unknown") + "g"
-                    distance = meta.get("distance", "unknown") + "mm"
-                    image_type = meta.get("image_type", key)
-                    dest_dir = os.path.join(output_dir, material, grit, weight, distance)
-                    os.makedirs(dest_dir, exist_ok=True)
-                    dest_file = os.path.join(dest_dir, f"{image_type}.png")
-                    jpg_file = tar.extractfile(files[".jpg"])
-                    if not jpg_file:
-                        continue
-                    try:
-                        img = Image.open(jpg_file)
-                        img.save(dest_file)
-                    except Exception as e:
-                        typer.echo(f"Error saving image from {files['.jpg'].name}: {e}")
-    
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        list(tqdm(executor.map(process_shard, tar_files), total=len(tar_files), desc="Decompressing shards"))
-    
+    # Create a progress instance for decompression.
+    with Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn()
+    ) as progress:
+        task = progress.add_task("Decompressing shards...", total=len(tar_files))
+        
+        def process_shard(tar_path: str):
+            with tarfile.open(tar_path, 'r') as tar:
+                members = tar.getmembers()
+                # Group members by key (assume filenames like 000001.jpg and 000001.json)
+                samples = {}
+                for member in members:
+                    key, ext = os.path.splitext(member.name)
+                    if key not in samples:
+                        samples[key] = {}
+                    samples[key][ext] = member
+                for key, files in samples.items():
+                    if ".json" in files and ".jpg" in files:
+                        json_file = tar.extractfile(files[".json"])
+                        if not json_file:
+                            continue
+                        try:
+                            meta = json.load(json_file)
+                        except Exception as e:
+                            typer.echo(f"Error parsing JSON in {files['.json'].name}: {e}")
+                            continue
+                        # Determine destination from metadata.
+                        mat = meta.get("material", "unknown")
+                        gr = meta.get("grit", "unknown")
+                        wt = meta.get("weight", "unknown") + "g"
+                        dist = meta.get("distance", "unknown") + "mm"
+                        img_type = meta.get("image_type", key)
+                        dest_dir = os.path.join(output_dir, mat, gr, wt, dist)
+                        os.makedirs(dest_dir, exist_ok=True)
+                        dest_file = os.path.join(dest_dir, f"{img_type}.png")
+                        jpg_file = tar.extractfile(files[".jpg"])
+                        if not jpg_file:
+                            continue
+                        try:
+                            img = Image.open(jpg_file)
+                            img.save(dest_file)
+                        except Exception as e:
+                            typer.echo(f"Error saving image from {files['.jpg'].name}: {e}")
+            return tar_path
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            for _ in executor.map(process_shard, tar_files):
+                progress.update(task, advance=1)
     typer.echo(f"Decompressed WebDataset shards to {output_dir}")
 
 ####################################
-# TYPER COMMANDS
+# TYPER COMMANDS                   #
 ####################################
 
 @app.command(name="extract")

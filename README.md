@@ -1,163 +1,144 @@
-# Friction Surfaces Dataset
+# Friction Surfaces Dataset Pipeline
 
-Welcome to the Friction Surfaces Dataset—a comprehensive collection of images that capture how various surfaces react and change due to wear under different conditions. This dataset is ideally suited for research and projects in computer vision, material science, and machine learning.
+The **Friction Surfaces Dataset Pipeline** is a high-performance Python-based I/O system designed for processing large-scale deep learning datasets. This repository provides tools to convert the raw Friction Surfaces dataset into efficient storage formats (Parquet files and WebDataset shards) and to easily extract images from those formats—all with a focus on seamless integration into PyTorch workflows.
+
+---
+
+## Table of Contents
+
+- [Dataset Overview](#dataset-overview)
+- [The WebDataset Format](#the-webdataset-format)
+- [Pipeline Components](#pipeline-components)
+  - [Parquet Conversion](#parquet-conversion)
+  - [WebDataset Shard Creation](#webdataset-shard-creation)
+  - [Image Extraction](#image-extraction)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Examples](#examples)
+- [License](#license)
+- [Acknowledgements](#acknowledgements)
+- [Contact](#contact)
 
 ---
 
 ## Dataset Overview
 
-The Friction Surfaces Dataset provides high-quality images captured from various materials as they undergo wear. The images include different types such as height maps, normal maps, and more, which offer insight into how surfaces deteriorate with different grit levels, weights, and distances.
+The **Friction Surfaces Dataset** is a collection of surface images that depict how various materials change under wear. The dataset includes:
 
-**Key Features:**
+- **Materials:** Cartboard, MDF, PLA
+- **Grit Levels:** S40, S60, S120, etc.
+- **Weights:** 10g, 20g, 50g, etc.
+- **Distances:** 0mm, 200mm, etc.
+- **Image Types:** Height maps, normal maps, ambient occlusion (AO), bump maps, displacement maps, hillshade, metallic, roughness, and more.
 
-- **Materials:**  
-  - Cartboard  
-  - MDF  
-  - PLA
-
-- **Grit Levels:**  
-  - Examples: S40, S60, S120, etc.
-
-- **Weights:**  
-  - Examples: 10g, 20g, 50g, etc.
-
-- **Distances:**  
-  - Examples: 0mm, 200mm, etc.
-
-- **Image Variants:**  
-  - Height maps  
-  - Normal maps  
-  - Ambient Occlusion (AO)  
-  - Bump maps  
-  - Displacement maps  
-  - Hillshade images  
-  - Metallic maps  
-  - Roughness maps  
-  - Additional metadata files (when available)
-
----
-
-## Directory Structure
-
-The dataset is organized into a hierarchical structure that reflects the different parameters (materials, grit, weight, distance) which affect surface wear. Below is an illustrative example of the directory tree:
+The images are organized in the following folder hierarchy:
 
 ```
 Wear/
-├── Cartboard/
-│   └── S60/
-│       ├── 10g/
-│       │   ├── 0mm/
-│       │   │   ├── height.png
-│       │   │   ├── normal.png
-│       │   │   └── ... 
-│       │   └── 200mm/
-│       │       └── ...
-│       ├── 100g/
-│       │   └── 0mm/
-│       │       └── ...
-│       └── 50g/
-│           ├── 0mm/
-│           │   └── ...
-│           └── 200mm/
-│               └── ...
-├── MDF/
-│   └── S40/
-│       └── 200g/
-│           └── ...
-├── PLA/
-│   └── Linear/
-│       ├── S120/
-│       │   ├── 0mm/
-│       │   │   └── ...
-│       │   └── 1000mm/
-│       │       └── ...
-│       └── metadata.json
+├── Material (e.g., Cartboard, MDF, PLA)
+    ├── Grit (e.g., S40, S60, S120, etc.)
+        ├── Weight (e.g., 10g, 20g, 50g, etc.)
+            ├── Distance (e.g., 0mm, 200mm, etc.)
+                └── Image files (e.g., height.png, normal.png, etc.)
 ```
 
 ---
 
-## Tools and Processing Pipelines
+## The WebDataset Format
 
-This repository includes an integrated set of Python tools designed to help you process and analyze the dataset. The tools are optimized for flexibility and scalability, supporting multiple modes of operation:
+WebDataset is a file format and accompanying Python library designed for high-throughput streaming of large-scale datasets.  
+Key points include:
 
-### 1. Parquet Conversion
+- **Sharded Archives:**  
+  Data is stored in tar archives (shards). Each shard is named sequentially (e.g., `shard-000000.tar`) and contains samples grouped by a common key.
 
-- **Description:**  
-  Convert the dataset images into Parquet files with embedded raw binary JPEG data. This enables efficient storage and metadata querying.
-  
-- **Script:** `generate_datasets.py`  
-- **Usage Example:**
+- **File Grouping Convention:**  
+  Within each tar file, files that belong together share the same basename when their extension is removed (e.g., `000001.jpg` and `000001.json`).  
+  The image file (e.g., `.jpg`) contains the sample data (often in its native format), and the JSON file contains metadata.
 
-  ```bash
-  python generate_datasets.py --mode parquet --input-dir /path/to/Wear --output-dir parquet_data
-  ```
-
-### 2. WebDataset Shard Creation
-
-- **Description:**  
-  Create WebDataset shards (tar archives containing JPEG images and JSON metadata) for efficient streaming into PyTorch DataLoaders.
-  
-- **Script:** `generate_datasets.py` (use `--mode webdataset`)  
-- **Usage Example:**
-
-  ```bash
-  python generate_datasets.py --mode webdataset --input-dir /path/to/Wear --output-dir webdataset_shards --shard-size 100
-  ```
-
-### 3. Image Extraction
-
-- **Description:**  
-  Extract and save images from Parquet files based solely on the embedded binary data—making the dataset completely self-contained.
-  
-- **Script:** `read_datasets.py` (use `--mode extract`)  
-- **Usage Example:**
-
-  ```bash
-  python read_datasets.py --mode extract --input-dir parquet_data --output-dir extracted_images --material MDF
-  ```
-
-### 4. Dataset Downloading
-
-- **Description:**  
-  Automatically download the dataset from a provided URL (assumed to point to a ZIP archive) if it is not already present.
-  
-- **Usage Example:**
-
-  ```bash
-  python generate_datasets.py --dataset-url http://example.com/dataset.zip --input-dir /path/to/download
-  ```
+- **Efficiency:**  
+  WebDataset allows purely sequential I/O, taking full advantage of local disk performance and cloud object stores with minimal random I/O overhead.
 
 ---
 
-## Installation & Dependencies
+## Pipeline Components
 
-Ensure you have **Python 3.7+** installed. The following Python packages are required:
+The Friction Surfaces Dataset Pipeline includes the following components:
 
-- **pandas**
-- **numpy**
-- **Pillow**
-- **rich**
-- **pyarrow**
-- **requests** (for dataset downloading)
+### Parquet Conversion
 
-You can install these dependencies via pip:
+- **Purpose:**  
+  Convert each folder of the raw dataset into a Parquet file that embeds compressed JPEG images (stored as raw binary data) with accompanying metadata.  
+- **Output:**  
+  Parquet files and a metadata file (`metadata.parquet`).
+
+### WebDataset Shard Creation
+
+- **Purpose:**  
+  Process the raw dataset to create WebDataset shards. Each shard is a tar archive containing JPEG files and their corresponding JSON metadata files.
+- **Output:**  
+  Shards are created under a specified output directory.
+
+### Image Extraction
+
+- **Purpose:**  
+  Extract images from Parquet files by reading the embedded binary image data without any dependency on the original file paths.
+- **Output:**  
+  Reconstructed image files organized in a folder structure similar to the original dataset hierarchy.
+
+---
+
+## Installation
+
+Ensure you have Python 3.7 or later installed. The pipeline requires the following packages:
+
+- pandas
+- numpy
+- Pillow
+- rich
+- pyarrow
+- tqdm
+- typer
+
+You can install the required packages via pip:
 
 ```bash
-pip install pandas numpy pillow rich pyarrow requests
+pip install pandas numpy pillow rich pyarrow tqdm typer
 ```
 
 ---
 
-## Getting Started
+## Usage
 
-1. **Download the Dataset:**  
-   If you have a dataset URL, run the script in download mode to get started. Otherwise, ensure that your `Wear/` directory is in place.
+Two main scripts are provided in this repository:
 
-2. **Convert to Parquet:**  
-   Use the parquet conversion mode to process and compress the dataset images into Parquet files.
+1. **generate_datasets.py** – for generating Parquet files and WebDataset shards.  
+2. **read_datasets.py** – for extracting images from Parquet files or decompressing WebDataset shards.
 
-3. **(Optional) Create WebDataset Shards:**  
-   For integration with PyTorch and high-performance data streaming, create WebDataset shards.
+### Generate Datasets
 
-4. **Extract Images:**  
-   When needed, extract images from the Parquet files using the image extraction tools.
+- **Parquet Conversion:**
+  
+  ```bash
+  python3 generate_datasets.py parquet --input-dir Wear --output-dir data --workers 8
+  ```
+  
+- **WebDataset Shard Creation:**
+
+  ```bash
+  python3 generate_datasets.py webdataset --input-dir Wear --output-dir webdataset_shards --shard-size 100 --workers 8
+  ```
+
+### Read / Extract Datasets
+
+- **Extract Images from Parquet Files:**
+
+  ```bash
+  python3 read_datasets.py extract --input-dir data --output-dir extracted_images
+  ```
+
+- **Decompress WebDataset Shards:**
+
+  ```bash
+  python3 read_datasets.py decompress-webdataset --input-dir webdataset_shards --output-dir decompressed_webdataset --workers 8
+  ```
