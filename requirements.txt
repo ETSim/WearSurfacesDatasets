@@ -4,3 +4,4 @@ numpy
 pillow
 matplotlib
 rich
+typer
