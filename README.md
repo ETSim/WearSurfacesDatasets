@@ -1,4 +1,4 @@
-# Friction Surfaces Dataset Pipeline
+# Wear Surfaces Dataset Pipeline
 
 A suite of Python tools for processing, converting and managing high‑resolution surface‑texture datasets captured under controlled wear tests. 
 
