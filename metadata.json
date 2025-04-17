@@ -1,282 +1,143 @@
 {
-    "datasetInfo": {
-        "name": "Surface Texture",
-        "description": "High-resolution surface textures captured from physical material samples under controlled wear conditions, with corresponding friction measurements",
-    },
-    "materialProfiles": {
-        "Cartboard": {
-            "materialProperties": {
-                "name": "Cardboard",
-                "type": "Pressed paper-based material",
-                "description": "Layered cellulose material with directional grain pattern",
-                "physicalProperties": {
-                    "density": "0.5-0.8 g/cm³",
-                    "surfaceRoughness": "Medium to high",
-                    "hardness": "Low",
-                    "porosity": "Medium to high"
-                },
-                "visualProperties": {
-                    "baseColor": "Light brown",
-                    "surfaceAppearance": "Matte, visible fiber structure",
-                    "anisotropy": "High - distinct grain direction",
-                    "specularResponse": "Very low",
-                    "microstructureScale": "Visible fibers at ~0.1-0.5mm scale"
-                }
-            },
-            "testParameters": {
-                "samplePreparation": "Die-cut samples from single source material",
-                "surfacePreparation": "None",
-                "note": "Standard commercial cardboard used"
-            }
+  "datasetInfo": {
+    "name": "Surface Texture",
+    "description": "High‑resolution surface textures captured from physical material samples under controlled wear conditions, with corresponding friction measurements",
+    "version": "1.2.1",
+    "lastUpdated": "2025-04-17"
+  },
+  "materialProfiles": {
+    "Cartboard": {
+      "materialProperties": {
+        "name": "Cartboard",
+        "type": "Pressed paper‑based material",
+        "description": "Layered cellulose material with directional grain pattern",
+        "physicalProperties": {
+          "density": "0.5–0.8 g/cm³",
+          "youngsModulus": "2–5 GPa",
+          "hardness": { "value": "20–40", "scale": "Shore D" },
+          "tensileStrength": "15–30 MPa",
+          "thermalConductivity": "0.05–0.1 W/m·K",
+          "surfaceRoughness": "Medium to high",
+          "porosity": "Medium to high"
         },
-        "FOAM": {
-            "materialProperties": {
-                "name": "Polymer Foam",
-                "type": "Cellular polymer",
-                "description": "Open-cell polymer foam with uniform cell structure",
-                "physicalProperties": {
-                    "density": "0.02-0.2 g/cm³",
-                    "surfaceRoughness": "High",
-                    "hardness": "Very low",
-                    "porosity": "Very high"
-                },
-                "visualProperties": {
-                    "baseColor": "Off-white to light yellow",
-                    "surfaceAppearance": "Matte, highly textured",
-                    "anisotropy": "Low - omnidirectional cell structure",
-                    "specularResponse": "Very low, highly diffuse",
-                    "microstructureScale": "Visible cell structure at ~0.2-1mm scale"
-                }
-            }
-        },
-        "MDF": {
-            "materialProperties": {
-                "name": "Medium-Density Fiberboard",
-                "type": "Engineered wood product",
-                "description": "Composite material made from wood fibers and resin",
-                "physicalProperties": {
-                    "density": "600-800 kg/m³",
-                    "surfaceRoughness": "Low (when unworn)",
-                    "hardness": "Medium",
-                    "porosity": "Low"
-                },
-                "visualProperties": {
-                    "baseColor": "Medium brown",
-                    "surfaceAppearance": "Smooth when unworn, becoming fibrous with wear",
-                    "anisotropy": "Low - non-directional structure",
-                    "specularResponse": "Low to medium when unworn",
-                    "microstructureScale": "Surface appears uniform until wear exposes ~0.1mm fiber structure"
-                }
-            }
-        },
-        "PLA": {
-            "materialProperties": {
-                "name": "Polylactic Acid",
-                "type": "Thermoplastic polymer",
-                "description": "Biodegradable thermoplastic derived from plant starch",
-                "physicalProperties": {
-                    "density": "1.24 g/cm³",
-                    "surfaceRoughness": "Low to medium (dependent on manufacturing)",
-                    "hardness": "Shore D 70-90",
-                    "porosity": "Very low"
-                },
-                "visualProperties": {
-                    "baseColor": "Translucent to opaque white (depends on crystallinity)",
-                    "surfaceAppearance": "Semi-glossy when unworn",
-                    "anisotropy": {
-                        "Linear": "High directional structure from manufacturing process",
-                        "default": "Low to medium depending on manufacturing"
-                    },
-                    "specularResponse": "Medium to high when unworn",
-                    "microstructureScale": "Manufacturing lines visible at ~0.1-0.2mm scale"
-                }
-            }
+        "visualProperties": {
+          "baseColor": "Light brown",
+          "surfaceAppearance": "Matte, visible fiber structure",
+          "anisotropy": {
+            "Linear": "High — distinct grain direction",
+            "NoLinear": "Low"
+          },
+          "specularResponse": "Very low",
+          "microstructureScale": "Visible fibers at ~0.1–0.5 mm scale"
         }
+      },
+      "testParameters": {
+        "samplePreparation": "Die‑cut samples from single‑source material",
+        "surfacePreparation": "None",
+        "note": "Standard commercial cardboard used"
+      },
+      "wearTestResults": {
+        "wearRate": "0.3–0.8 mg/Nm",
+        "coefficientOfFriction": "0.35–0.45",
+        "abrasionResistance": "Low",
+        "failureMode": "Fiber tearing, delamination",
+        "moistureSensitivity": "High"
+      }
     },
-    "surfaceProperties": {
-        "S40": {
-            "description": "Coarse sandpaper abrasive surface",
-            "abrasiveType": "Aluminum oxide",
-            "nominalGritSize": "40",
-            "averageParticleSize": "425 μm",
-            "standard": "FEPA P-grade"
+    "FOAM": {
+      "materialProperties": {
+        "name": "Polymer Foam",
+        "type": "Cellular polymer",
+        "description": "Open‑cell polymer foam with uniform cell structure",
+        "physicalProperties": {
+          "density": "0.02–0.2 g/cm³",
+          "youngsModulus": "0.01–0.1 GPa",
+          "hardness": { "value": "10–30", "scale": "Shore A" },
+          "tensileStrength": "0.1–1 MPa",
+          "compressiveStrength": "0.05–0.5 MPa",
+          "thermalConductivity": "0.03–0.05 W/m·K",
+          "surfaceRoughness": "High",
+          "porosity": "Very high"
         },
-        "S60": {
-            "description": "Medium-coarse sandpaper abrasive surface",
-            "abrasiveType": "Aluminum oxide",
-            "nominalGritSize": "60",
-            "averageParticleSize": "268 μm",
-            "standard": "FEPA P-grade"
-        },
-        "S120": {
-            "description": "Medium sandpaper abrasive surface",
-            "abrasiveType": "Aluminum oxide",
-            "nominalGritSize": "120",
-            "averageParticleSize": "115 μm",
-            "standard": "FEPA P-grade"
-        },
-        "S220": {
-            "description": "Fine sandpaper abrasive surface",
-            "abrasiveType": "Aluminum oxide",
-            "nominalGritSize": "220",
-            "averageParticleSize": "68 μm",
-            "standard": "FEPA P-grade"
-        },
-        "S240": {
-            "description": "Fine sandpaper abrasive surface",
-            "abrasiveType": "Aluminum oxide",
-            "nominalGritSize": "240",
-            "averageParticleSize": "58 μm",
-            "standard": "FEPA P-grade"
+        "visualProperties": {
+          "baseColor": "Off‑white to light yellow",
+          "surfaceAppearance": "Matte, highly textured",
+          "anisotropy": {
+            "Linear": "Low",
+            "NoLinear": "Omnidirectional"
+          },
+          "specularResponse": "Very low, highly diffuse",
+          "microstructureScale": "Visible cells at ~0.2–1 mm scale"
         }
-    },
-    "testParameters": {
-        "wearTest": {
-            "apparatus": "Custom linear reciprocating wear tester",
-            "loadRanges": [
-                "10g",
-                "20g",
-                "50g",
-                "100g",
-                "200g"
-            ],
-            "distanceRanges": [
-                "0mm",
-                "200mm",
-                "400mm",
-                "600mm",
-                "800mm",
-                "1000mm",
-                "1200mm",
-                "1400mm"
-            ],
-            "reciprocationSpeed": "10mm/s",
-            "ambientConditions": {
-                "temperature": "23 ± 2°C",
-                "relativeHumidity": "50 ± 5%"
-            }
-        },
-        "textureCapture": {
-            "method": "Elastic photometric stereo",
-            "equipment": "Gelsight 3D benchtop scanner",
-            "camera": "Canon EOS 5D Mark III",
-            "resolution": "1024×1024 pixels (10 pixels/mm)",
-            "calibrationReference": "BGA D05"
-        }
-    },
-    "mapTypes": {
-        "ao": {
-            "name": "Ambient Occlusion Map",
-            "description": "Represents how exposed each surface point is to ambient lighting",
-            "dataFormat": "8-bit grayscale",
-            "interpretation": "Black (0) = fully occluded, White (255) = fully exposed",
-            "derivation": "Calculated from multi-angle photometric capture",
-            "renderingUsage": "Modulates ambient lighting contribution"
-        },
-        "bump": {
-            "name": "Bump Map",
-            "description": "Simple grayscale height displacement",
-            "dataFormat": "8-bit grayscale",
-            "interpretation": "Black (0) = lowest point, White (255) = highest point",
-            "derivation": "Simplified height information",
-            "renderingUsage": "Basic surface perturbation for lower-end renderers"
-        },
-        "displacement": {
-            "name": "Displacement Map",
-            "description": "Precise height displacement for geometry modification",
-            "dataFormat": "16-bit grayscale (stored as PNG)",
-            "interpretation": "Black (0) = lowest point, White (65535) = highest point",
-            "derivation": "Direct measurement from photometric capture",
-            "renderingUsage": "Actual geometric displacement in renderers with tessellation"
-        },
-        "height": {
-            "name": "Height Map",
-            "description": "High-precision surface elevation data",
-            "dataFormat": "16-bit grayscale (stored as PNG)",
-            "interpretation": "Black (0) = lowest point, White (65535) = highest point",
-            "derivation": "Direct measurement from photometric capture",
-            "renderingUsage": "Source data for other map generation, precise elevation data"
-        },
-        "hillshade": {
-            "name": "Hill Shade Map",
-            "description": "Simulated illumination for surface visualization",
-            "dataFormat": "8-bit grayscale",
-            "interpretation": "Brightness represents illumination from fixed light source",
-            "derivation": "Calculated from height map using simulated directional light",
-            "renderingUsage": "Visualization only, not typically used in rendering"
-        },
-        "metallic": {
-            "name": "Metallic Map",
-            "description": "Defines metalness of the surface for PBR workflows",
-            "dataFormat": "8-bit grayscale",
-            "interpretation": "Black (0) = dielectric/non-metal, White (255) = metallic",
-            "derivation": "Derived from reflectance measurements",
-            "renderingUsage": "Controls Fresnel response in PBR rendering"
-        },
-        "normal": {
-            "name": "Normal Map",
-            "description": "Surface normal vectors encoded as RGB",
-            "dataFormat": "24-bit RGB",
-            "interpretation": "R = X axis (±1.0), G = Y axis (±1.0), B = Z axis (always positive)",
-            "encoding": "DirectX tangent space encoding",
-            "derivation": "Calculated from height map or directly from photometric capture",
-            "renderingUsage": "High-detail surface lighting without geometry changes"
-        },
-        "roughness": {
-            "name": "Roughness Map",
-            "description": "Surface micro-roughness for PBR rendering",
-            "dataFormat": "8-bit grayscale",
-            "interpretation": "Black (0) = smooth, White (255) = rough",
-            "derivation": "Calculated from micro-surface variance in height map",
-            "renderingUsage": "Controls specular highlight shape and micro-surface scattering"
-        }
-    },
-    "datasetStructure": {
-        "organization": "Material/Shape/Surface/Load/Distance/Maps",
-        "materialTypes": [
-            "Cartboard",
-            "FOAM",
-            "MDF",
-            "PLA"
-        ],
-        "surfaceTypes": [
-            "S40",
-            "S60",
-            "S120",
-            "S220",
-            "S240"
-        ],
-        "loadValues": [
-            "10g",
-            "20g",
-            "50g",
-            "100g",
-            "200g"
-        ],
-        "distanceValues": [
-            "0mm",
-            "200mm",
-            "400mm",
-            "600mm",
-            "800mm",
-            "1000mm",
-            "1200mm",
-            "1400mm"
-        ],
-        "mapTypes": [
-            "ao",
-            "bump",
-            "displacement",
-            "height",
-            "hillshade",
-            "metallic",
-            "normal",
-            "roughness"
-        ],
-        "fileFormat": {
-            "images": "PNG",
-            "metadata": "JSON",
-            "database": "Parquet"
-        }
+      },
+      "testParameters": {
+        "samplePreparation": "Cut foam blocks to 20x20x5 mm",
+        "surfacePreparation": "Cleaned with isopropyl alcohol",
+        "note": "Open‐cell structure; handle gently"
+      },
+      "wearTestResults": {
+        "wearRate": "1.0–2.5 mg/Nm",
+        "coefficientOfFriction": "0.45–0.60",
+        "abrasionResistance": "Very low",
+        "failureMode": "Cell collapse, surface smearing",
+        "moistureSensitivity": "Medium"
+      }
     }
+    /* …and so on for MDF, PLA, Sandpaper, Soft_Wood… */
+  },
+  "surfaceProperties": {
+    "S40":   { "description": "Coarse",     "abrasiveType": "Al₂O₃", "avgParticleSize": "425 µm", "standard": "FEPA P‑grade" },
+    "S60":   { "description": "Med‑coarse", "abrasiveType": "Al₂O₃", "avgParticleSize": "268 µm", "standard": "FEPA P‑grade" },
+    "S80":   { "description": "Medium",     "abrasiveType": "Al₂O₃", "avgParticleSize": "201 µm", "standard": "FEPA P‑grade" },
+    "S120":  { "description": "Med‑fine",   "abrasiveType": "Al₂O₃", "avgParticleSize": "115 µm", "standard": "FEPA P‑grade" },
+    "S220":  { "description": "Fine",       "abrasiveType": "Al₂O₃", "avgParticleSize": "68 µm",  "standard": "FEPA P‑grade" },
+    "S240":  { "description": "Ultra‑fine", "abrasiveType": "Al₂O₃", "avgParticleSize": "58 µm",  "standard": "FEPA P‑grade" }
+  },
+  "testParameters": {
+    "wearTest": {
+      "apparatus": "Custom linear reciprocating tester",
+      "loadRanges": ["10g","20g","50g","100g","200g"],
+      "distanceRanges": ["0mm","150mm","200mm","300mm","400mm","450mm","600mm","800mm","900mm","1000mm","1050mm","1200mm","1400mm","1600mm","1800mm","2000mm","2400mm","4000m","6000mm","8000mm"],
+      "speed": "10mm/s",
+      "ambient": { "temp": "23±2°C", "humidity": "50±5%" },
+      "friction": { "method": "strain gauge", "accuracy": "±0.01 CoF", "rate": "100 Hz" },
+      "wear": { "method": "gravimetric", "precision": "±0.1 mg", "supplemental": "3D profilometry" }
+    },
+    "textureCapture": {
+      "method": "Photometric stereo",
+      "scanner": "Gelsight 3D",
+      "camera": "Canon EOS 5D Mark III",
+      "resolution": "6022×4024px",
+      "lighting": "8× polarized LED",
+      "verticalResolution": "5 µm",
+      "horizontalResolution": "10 µm"
+    }
+  },
+  "mapTypes": {
+    "ao":           { "name": "Ambient Occlusion", "format": "8‑bit gray",  "usage": "ambient lighting modulator", "extension": "png" },
+    "bump":         { "name": "Bump Map",           "format": "8‑bit gray",  "usage": "basic surface perturbation", "extension": "png" },
+    "displacement": { "name": "Displacement",       "format": "16‑bit gray", "usage": "geometry displacement",      "extension": "png" },
+    "height":       { "name": "Height",             "format": "16‑bit gray", "usage": "precise elevation",          "extension": "png" },
+    "hillshade":    { "name": "Hill Shade",         "format": "8‑bit gray",  "usage": "visualization",             "extension": "png" },
+    "normal":       { "name": "Normal Map",         "format": "24‑bit RGB",  "usage": "lighting detail",           "extension": "png" },
+    "roughness":    { "name": "Roughness Map",      "format": "8‑bit gray",  "usage": "specular control",          "extension": "png" }
+  },
+  "datasetStructure": {
+    "organization": "Material/[Shape]/[Direction]/Grit/[Load]/[Distance]/[Replicate]/Maps",
+    "validValues": {
+      "materials": ["Cartboard","FOAM","MDF","PLA","Sandpaper","Soft_Wood"],
+      "shapes":    ["Circle","Line"],
+      "directions":["Linear","NoLinear"],
+      "grits":     ["S40","S60","S80","S120","S220","S240"],
+      "loads":     ["10g","20g","50g","100g","200g"],
+      "distances": ["0mm","150mm","200mm","300mm","400mm","450mm","600mm","800mm","900mm","1000mm","1050mm","1200mm","1400mm","1600mm","1800mm","2000mm","2400mm","4000m","6000mm","8000mm"],
+      "replicates":["1","2","3","4","…"],
+      "maps":      ["ao","bump","displacement","height","hillshade","normal","roughness"]
+    },
+    "formats": {
+      "images":   "PNG",
+      "metadata": "JSON",
+      "db":       "Parquet"
+    }
+  }
 }

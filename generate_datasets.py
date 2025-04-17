@@ -1,346 +1,343 @@
 #!/usr/bin/env python3
+"""
+generate_datasets.py: Friction Surfaces Dataset Pipeline
+
+Commands:
+  - parquet      Convert raw PNG maps into Parquet files + metadata
+  - webdataset   Bundle maps + JSON into WebDataset .tar shards
+  - extract      Reconstruct PNGs from Parquet store
+  - decompress   Recreate PNGs from WebDataset shards
+  - smart-update Incrementally update Parquet + WebDataset (only changed files)
+  - run-all      Full rebuild: Parquet → metadata → WebDataset
+"""
 import os
 import io
 import json
 import tarfile
-import concurrent.futures
-import base64
 import logging
+import hashlib
+import re
+from datetime import datetime
+from pathlib import Path
+import concurrent.futures
+
 import pandas as pd
 from PIL import Image
 from rich.progress import Progress, TextColumn, BarColumn, TimeElapsedColumn, TimeRemainingColumn
-from tqdm import tqdm
 import typer
 
-# Configure logging
+# -----------------------------------
+# Configuration & Logging
+# -----------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger(__name__)
+app = typer.Typer()
 
-app = typer.Typer(help="Friction Surfaces Dataset Pipeline: Convert to Parquet, create WebDataset shards, or extract images.")
+# -----------------------------------
+# Helpers
+# -----------------------------------
+GRIT_RE   = re.compile(r"^S(\d+)$")
+WEIGHT_RE = re.compile(r"^(\d+)g$")
+DIST_RE   = re.compile(r"^(\d+)(mm|m)$")
+CHANGELOG = {}
 
-#####################################
-# HELPER FUNCTIONS                  #
-#####################################
+def compute_hash(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
-def get_wear_dir(base_dir: str) -> str:
-    """Return the correct Wear directory given a base directory.
-    If the base directory’s name is already 'Wear' (case insensitive), return it;
-    otherwise, append 'Wear'."""
-    if os.path.basename(os.path.normpath(base_dir)).lower() == "wear":
-        logger.info("Input directory is already 'Wear'.")
-        return base_dir
-    else:
-        wear_dir = os.path.join(base_dir, "Wear")
-        logger.info(f"Appending 'Wear' to base directory, using: {wear_dir}")
-        return wear_dir
+def has_changed(path: Path) -> bool:
+    try:
+        h = compute_hash(path)
+    except FileNotFoundError:
+        return False
+    prev = CHANGELOG.get(str(path))
+    if prev != h:
+        CHANGELOG[str(path)] = h
+        return True
+    return False
 
-#####################################
-# PARQUET CONVERSION BLOCK          #
-#####################################
-
-def process_distance_folder(material, grit, weight, distance, base_dir, output_dir):
-    """
-    Process a single distance folder and create a Parquet file.
-    
-    Reads each PNG file from the folder, converts it to a compressed JPEG,
-    and stores the raw binary data (as bytes) along with metadata.
-    The original image path is not saved.
-    """
-    wear_dir = get_wear_dir(base_dir)
-    distance_path = os.path.join(wear_dir, material, grit, weight, distance)
-    weight_value = weight.replace('g', '')
-    distance_value = distance.replace('mm', '')
-
-    if not os.path.isdir(distance_path):
-        logger.warning(f"Folder not found: {distance_path}")
-        return None
-
-    image_files = [f for f in os.listdir(distance_path) if f.endswith('.png')]
-    if not image_files:
-        logger.warning(f"No PNG files in {distance_path}")
-        return None
-
-    records = []
-    for image_file in image_files:
-        image_path = os.path.join(distance_path, image_file)
-        image_type = os.path.splitext(image_file)[0]
-        try:
-            with Image.open(image_path) as img:
-                width, height = img.size
-                mode = img.mode
-                if img.mode in ("RGBA", "LA", "P"):
-                    img = img.convert("RGB")
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=85, optimize=True, progressive=True)
-                image_bytes = buffer.getvalue()
-            record = {
-                'material': material,
-                'grit': grit,
-                'weight': weight_value,
-                'distance': distance_value,
-                'image_type': image_type,
-                'image_width': width,
-                'image_height': height,
-                'image_mode': mode,
-                'image_data': image_bytes
-            }
-            records.append(record)
-            logger.debug(f"Processed image {image_path} successfully.")
-        except Exception as e:
-            logger.error(f"Error processing {image_path}: {str(e)}")
-    
-    if not records:
-        return None
-
-    parquet_dir = os.path.join(output_dir, material, grit, weight)
-    os.makedirs(parquet_dir, exist_ok=True)
-    df = pd.DataFrame(records)
-    parquet_file = os.path.join(parquet_dir, f"{distance}.parquet")
-    df.to_parquet(parquet_file, compression='snappy', engine='pyarrow')
-    logger.info(f"Created Parquet file: {parquet_file}")
-    return parquet_file
-
-def find_all_folders(base_dir):
-    """
-    Find all material/grit/weight/distance folder combinations from the dataset.
-    """
-    wear_dir = get_wear_dir(base_dir)
-    folders = []
-    for material in os.listdir(wear_dir):
-        material_path = os.path.join(wear_dir, material)
-        if not os.path.isdir(material_path):
-            continue
-        for grit in os.listdir(material_path):
-            grit_path = os.path.join(material_path, grit)
-            if not os.path.isdir(grit_path):
-                continue
-            for weight in os.listdir(grit_path):
-                weight_path = os.path.join(grit_path, weight)
-                if not os.path.isdir(weight_path):
-                    continue
-                for distance in os.listdir(weight_path):
-                    distance_path = os.path.join(weight_path, distance)
-                    if os.path.isdir(distance_path):
-                        folders.append((material, grit, weight, distance))
-    logger.info(f"Found {len(folders)} folders for processing.")
-    return folders
-
-def convert_to_parquet_per_folder(base_dir=".", output_dir="parquet_data", workers=8):
-    """
-    Convert the Friction Surfaces dataset into Parquet files (one per folder).
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    logger.info("Scanning directory structure for Parquet conversion...")
-    all_folders = find_all_folders(base_dir)
-    total_folders = len(all_folders)
-    logger.info(f"Found {total_folders} folders to process.")
-
-    successful = 0
-    with Progress(
-        TextColumn("[bold blue]{task.description}"),
+def progress_bar(total: int, desc: str):
+    return Progress(
+        TextColumn(f"[bold cyan]{desc}"),
         BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         TimeElapsedColumn(),
-        TimeRemainingColumn(),
-    ) as progress:
-        task = progress.add_task("Converting folders to Parquet...", total=total_folders)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_folder = {
-                executor.submit(process_distance_folder, material, grit, weight, distance, base_dir, output_dir):
-                (material, grit, weight, distance)
-                for material, grit, weight, distance in all_folders
-            }
-            for future in concurrent.futures.as_completed(future_to_folder):
-                folder = future_to_folder[future]
-                try:
-                    result = future.result()
-                    if result:
-                        successful += 1
-                        folder_desc = f"{folder[0]}/{folder[1]}/{folder[2]}/{folder[3]}"
-                        progress.update(task, description=f"Processed {folder_desc}")
-                        logger.info(f"Successfully processed folder: {folder_desc}")
-                except Exception as exc:
-                    logger.error(f"Folder {folder} generated an exception: {exc}")
-                progress.update(task, advance=1)
-    logger.info(f"Conversion complete. {successful}/{total_folders} folders successfully converted.")
-    logger.info(f"Parquet files are stored in: {output_dir}")
-    return output_dir
+        TimeRemainingColumn()
+    )
 
-def create_metadata_parquet(base_dir=".", output_dir="parquet_data"):
-    """
-    Create a metadata Parquet file with information about each processed folder.
-    """
-    parquet_files = []
-    for root, dirs, files in os.walk(output_dir):
-        for file in files:
-            if file.endswith(".parquet"):
-                parquet_path = os.path.join(root, file)
-                rel_path = os.path.relpath(parquet_path, output_dir)
-                parts = rel_path.split(os.sep)
-                if len(parts) >= 4:
-                    material, grit, weight, distance_file = parts[:4]
-                    distance = distance_file.replace(".parquet", "")
-                    parquet_files.append({
-                        'material': material,
-                        'grit': grit,
-                        'weight': weight.replace('g', ''),
-                        'distance': distance.replace('mm', ''),
-                        'parquet_path': rel_path
-                    })
-    df = pd.DataFrame(parquet_files)
-    metadata_file = os.path.join(output_dir, "metadata.parquet")
-    df.to_parquet(metadata_file, compression='snappy', engine='pyarrow')
-    logger.info(f"Metadata file created: {metadata_file} (contains {len(df)} files)")
-    return metadata_file
+def parse_png(png: Path, root: Path):
+    parts = png.relative_to(root).parts
+    if len(parts) < 6:
+        return None
+    mat, shape, direction, grit_p, weight_p, dist_p, *rest = parts
+    m1, m2, m3 = GRIT_RE.match(grit_p), WEIGHT_RE.match(weight_p), DIST_RE.match(dist_p)
+    if not (m1 and m2 and m3):
+        return None
+    grit    = int(m1.group(1))
+    weight  = int(m2.group(1))
+    dv, u   = int(m3.group(1)), m3.group(2)
+    dist    = dv * (1000 if u=='m' else 1)
+    rep     = int(rest[0]) if rest and rest[0].isdigit() else 1
+    return dict(
+        material=mat, shape=shape, direction=direction,
+        grit=grit, weight=weight, distance=dist, replicate=rep,
+        map_type=png.stem, png=png
+    )
 
-#####################################
-# WEBDATASET SHARD CREATION BLOCK  #
-#####################################
-
-def process_image_record(record):
-    """
-    Given a record with keys:
-      'material', 'grit', 'weight', 'distance', 'image_type', 'image_path',
-    open the image, convert to compressed JPEG, and add 'image_data'.
-    Removes 'image_path' from the returned record.
-    """
-    image_path = record['image_path']
+def _encode_record(r: dict) -> dict:
+    png = r["png"]
+    if not has_changed(png):
+        return None
     try:
-        with Image.open(image_path) as img:
-            width, height = img.size
-            mode = img.mode
-            if img.mode in ("RGBA", "LA", "P"):
+        with Image.open(png) as img:
+            w,h,mode = *img.size, img.mode
+            if mode in ("RGBA","LA","P"):
                 img = img.convert("RGB")
-            buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=85, optimize=True, progressive=True)
-            image_bytes = buffer.getvalue()
-        new_record = record.copy()
-        new_record.pop('image_path', None)
-        new_record['image_width'] = width
-        new_record['image_height'] = height
-        new_record['image_mode'] = mode
-        new_record['image_data'] = image_bytes
-        logger.debug(f"Processed record for image type {new_record.get('image_type')}")
-        return new_record
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", optimize=True, quality=85, progressive=True)
+        return {
+            **r,
+            "image_width": w,
+            "image_height": h,
+            "image_mode": mode,
+            "capture_date": datetime.utcnow().isoformat(),
+            "image_data": buf.getvalue()
+        }
     except Exception as e:
-        logger.error(f"Error processing {image_path}: {str(e)}")
+        logger.error(f"Failed encoding {png}: {e}")
         return None
 
-def create_shard(shard_path, records):
-    """
-    Create a WebDataset shard (tar archive) from a list of records.
-    Each record is stored as a JPEG file and a corresponding JSON file.
-    """
-    try:
-        with tarfile.open(shard_path, 'w') as tar:
-            for idx, rec in enumerate(records):
-                key = f"{idx:06d}"
-                img_bytes = rec['image_data']
-                img_info = tarfile.TarInfo(name=key + ".jpg")
-                img_info.size = len(img_bytes)
-                tar.addfile(img_info, io.BytesIO(img_bytes))
-                meta = rec.copy()
-                meta.pop('image_data', None)
-                meta_bytes = json.dumps(meta).encode("utf-8")
-                meta_info = tarfile.TarInfo(name=key + ".json")
-                meta_info.size = len(meta_bytes)
-                tar.addfile(meta_info, io.BytesIO(meta_bytes))
-        logger.info(f"Created shard: {shard_path}")
-    except Exception as e:
-        logger.error(f"Error creating shard {shard_path}: {str(e)}")
+# -----------------------------------
+# 1) PARQUET
+# -----------------------------------
+@app.command()
+def parquet(
+    input_dir: Path = typer.Option(..., exists=True, file_okay=False),
+    output_dir: Path = typer.Option(Path("parquet_data"), file_okay=False),
+    workers: int   = typer.Option(8)
+):
+    """Convert raw PNG maps into Parquet files + metadata."""
+    # Scan and parse all PNGs
+    recs = []
+    for png in input_dir.rglob("*.png"):
+        info = parse_png(png, input_dir)
+        if info:
+            recs.append(info)
 
-def create_shards_from_records(records, shard_size, output_dir, workers=8):
-    """
-    Split the list of records into shards of shard_size and create tar archives.
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    num_shards = (len(records) + shard_size - 1) // shard_size
-    logger.info(f"Creating {num_shards} shards (each with up to {shard_size} samples)...")
+    # Encode to JPEG bytes in parallel
+    processed = []
+    with progress_bar(len(recs), "Encoding images") as pb:
+        task = pb.add_task("", total=len(recs))
+        with concurrent.futures.ThreadPoolExecutor(workers) as exe:
+            futures = [exe.submit(_encode_record, r) for r in recs]
+            for f in concurrent.futures.as_completed(futures):
+                out = f.result()
+                if out:
+                    processed.append(out)
+                pb.update(task, advance=1)
+
+    # Group by sample and write Parquet files
+    groups = {}
+    for r in processed:
+        key = tuple(r[k] for k in ("material","shape","direction","grit","weight","distance","replicate"))
+        groups.setdefault(key, []).append(r)
+
+    for key, items in groups.items():
+        mat, shape, direction, grit, weight, dist, rep = key
+        folder = output_dir / mat / shape / direction / f"S{grit}" / f"{weight}g" / f"{dist}mm"
+        folder.mkdir(parents=True, exist_ok=True)
+        fname = f"rep{rep}.parquet" if rep != 1 else "data.parquet"
+        df = pd.DataFrame(items).drop(columns=["png"])
+        df.to_parquet(folder / fname, compression="snappy")
+        logger.info(f"Wrote Parquet: {folder / fname}")
+
+    # Create global metadata.parquet index
+    entries = []
+    for p in output_dir.rglob("*.parquet"):
+        rel = p.relative_to(output_dir)
+        mat, shape, direction, grit_p, weight_p, dist_p, fname = rel.parts
+        entries.append(dict(
+            material=mat,
+            shape=shape,
+            direction=direction,
+            grit=int(grit_p[1:]),
+            weight=int(weight_p[:-1]),
+            distance=int(dist_p[:-2]),
+            parquet_path=str(rel)
+        ))
+    pd.DataFrame(entries).to_parquet(output_dir / "metadata.parquet", compression="snappy")
+    typer.echo("Parquet conversion complete.")
+
+# -----------------------------------
+# 2) WEBDATASET
+# -----------------------------------
+@app.command()
+def webdataset(
+    input_dir: Path = typer.Option(..., exists=True, file_okay=False),
+    output_dir: Path = typer.Option(Path("webdataset_shards"), file_okay=False),
+    shard_size: int = typer.Option(100),
+    workers: int   = typer.Option(8)
+):
+    """Bundle raw PNG maps + metadata into sharded WebDataset .tar archives."""
+    # Scan & parse all PNGs
+    recs = []
+    for png in input_dir.rglob("*.png"):
+        info = parse_png(png, input_dir)
+        if info:
+            recs.append(info)
+
+    # Encode to JPEG bytes + metadata in parallel
+    processed = []
+    with progress_bar(len(recs), "Encoding for shards") as pb:
+        task = pb.add_task("", total=len(recs))
+        with concurrent.futures.ThreadPoolExecutor(workers) as exe:
+            futures = [exe.submit(_encode_record, r) for r in recs]
+            for f in concurrent.futures.as_completed(futures):
+                out = f.result()
+                if out:
+                    processed.append(out)
+                pb.update(task, advance=1)
+
+    # Shard into .tar files
+    output_dir.mkdir(parents=True, exist_ok=True)
+    num_shards = (len(processed) + shard_size - 1) // shard_size
     for i in range(num_shards):
-        shard_records = records[i * shard_size:(i + 1) * shard_size]
-        shard_name = f"shard-{i:04d}.tar"
-        shard_path = os.path.join(output_dir, shard_name)
-        create_shard(shard_path, shard_records)
+        batch = processed[i*shard_size:(i+1)*shard_size]
+        shard_path = output_dir / f"shard-{i:04d}.tar"
+        with tarfile.open(shard_path, 'w') as tar:
+            for idx, r in enumerate(batch):
+                key = f"{idx:06d}"
+                data = r.pop("image_data")
+                ti = tarfile.TarInfo(key + ".jpg"); ti.size = len(data)
+                tar.addfile(ti, io.BytesIO(data))
+                meta = json.dumps(r).encode()
+                ti = tarfile.TarInfo(key + ".json"); ti.size = len(meta)
+                tar.addfile(ti, io.BytesIO(meta))
+        logger.info(f"Wrote shard: {shard_path}")
 
-def collect_records_for_shards(input_dir):
-    """
-    Traverse the dataset directory structure (Wear/Material/Grit/Weight/Distance)
-    and collect records from PNG files with keys 'material', 'grit', 'weight',
-    'distance', 'image_type', and 'image_path'.
-    Uses tqdm for progress feedback.
-    """
-    records = []
-    wear_dir = get_wear_dir(input_dir)
-    for material in tqdm(os.listdir(wear_dir), desc="Materials", leave=False):
-        material_path = os.path.join(wear_dir, material)
-        if not os.path.isdir(material_path):
-            continue
-        for grit in os.listdir(material_path):
-            grit_path = os.path.join(material_path, grit)
-            if not os.path.isdir(grit_path):
-                continue
-            for weight in os.listdir(grit_path):
-                weight_path = os.path.join(grit_path, weight)
-                if not os.path.isdir(weight_path):
-                    continue
-                for distance in os.listdir(weight_path):
-                    distance_path = os.path.join(weight_path, distance)
-                    if not os.path.isdir(distance_path):
+    typer.echo("WebDataset shards created.")
+
+# -----------------------------------
+# 3) EXTRACT
+# -----------------------------------
+@app.command()
+def extract(
+    parquet_dir: Path = typer.Option(..., exists=True, file_okay=False),
+    output_dir: Path  = Path("extracted_images"),
+    material: str     = None,
+    shape: str        = None,
+    direction: str    = None,
+    grit: int         = None,
+    weight: int       = None,
+    distance: int     = None,
+    workers: int      = typer.Option(8)
+):
+    """Reconstruct PNGs from Parquet store."""
+    df = pd.read_parquet(parquet_dir / "metadata.parquet")
+    mask = True
+    for col,val in [("material",material),("shape",shape),("direction",direction),
+                    ("grit",grit),("weight",weight),("distance",distance)]:
+        if val is not None:
+            mask &= df[col] == val
+    df = df[mask]
+    if df.empty:
+        typer.echo("No matching records.")
+        return
+
+    parts = []
+    for row in df.itertuples():
+        parts.append(pd.read_parquet(parquet_dir / row.parquet_path))
+    all_df = pd.concat(parts, ignore_index=True)
+
+    with progress_bar(len(all_df), "Writing PNGs") as pb:
+        task = pb.add_task("", total=len(all_df))
+        def _save(r):
+            out = (output_dir / r.material / r.shape / r.direction /
+                   f"S{r.grit}" / f"{r.weight}g" / f"{r.distance}mm" /
+                   f"{r.map_type}.png")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            img = Image.open(io.BytesIO(r.image_data))
+            img.save(out)
+
+        with concurrent.futures.ThreadPoolExecutor(workers) as exe:
+            for _ in exe.map(_save, all_df.itertuples()):
+                pb.update(task, advance=1)
+
+    typer.echo(f"Extracted to {output_dir}")
+
+# -----------------------------------
+# 4) DECOMPRESS
+# -----------------------------------
+@app.command()
+def decompress(
+    shards_dir: Path = typer.Option(..., exists=True, file_okay=False),
+    output_dir: Path = Path("decompressed_images"),
+    workers: int    = typer.Option(4)
+):
+    """Recreate PNGs from WebDataset .tar shards."""
+    tars = list(shards_dir.glob("*.tar"))
+    if not tars:
+        typer.echo("No shards found."); return
+
+    with progress_bar(len(tars), "Decompressing shards") as pb:
+        task = pb.add_task("", total=len(tars))
+        def _unpack(tar_path):
+            with tarfile.open(tar_path) as tar:
+                samples = {}
+                for m in tar.getmembers():
+                    k, ext = Path(m.name).stem, Path(m.name).suffix
+                    samples.setdefault(k, {})[ext] = m
+                for files in samples.values():
+                    j = files.get(".json"); i = files.get(".jpg")
+                    if not (j and i):
                         continue
-                    for image_file in os.listdir(distance_path):
-                        if not image_file.endswith('.png'):
-                            continue
-                        record = {
-                            'material': material,
-                            'grit': grit,
-                            'weight': weight.replace('g', ''),
-                            'distance': distance.replace('mm', ''),
-                            'image_type': os.path.splitext(image_file)[0],
-                            'image_path': os.path.join(distance_path, image_file)
-                        }
-                        records.append(record)
-    logger.info(f"Collected {len(records)} records for shard creation.")
-    return records
+                    meta = json.load(tar.extractfile(j))
+                    out = (output_dir / meta["material"] / meta["shape"] /
+                           meta["direction"] / f"S{meta['grit']}" /
+                           f"{meta['weight']}g" / f"{meta['distance']}mm" /
+                           f"{meta['map_type']}.png")
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    img = Image.open(tar.extractfile(i))
+                    img.save(out)
+        with concurrent.futures.ThreadPoolExecutor(workers) as exe:
+            for _ in exe.map(_unpack, tars):
+                pb.update(task, advance=1)
 
-def create_webdataset_shards(input_dir, output_dir, shard_size, workers=8):
-    """
-    Create WebDataset shards from the dataset directory.
-    Uses threading to process image records concurrently.
-    """
-    raw_records = collect_records_for_shards(input_dir)
-    logger.info(f"Found {len(raw_records)} raw records for WebDataset creation.")
-    processed_records = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(process_image_record, rec) for rec in raw_records]
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            if result is not None:
-                processed_records.append(result)
-    logger.info(f"Processed {len(processed_records)} records successfully for WebDataset shards.")
-    create_shards_from_records(processed_records, shard_size, output_dir, workers)
+    typer.echo(f"Decompressed to {output_dir}")
 
-#####################################
-# TYPER COMMANDS                    #
-#####################################
+# -----------------------------------
+# 5) SMART UPDATE & RUN ALL
+# -----------------------------------
+@app.command()
+def smart_update(
+    wear_dir: Path    = typer.Option(..., exists=True, file_okay=False),
+    parquet_dir: Path = typer.Option(Path("parquet_data"), file_okay=False),
+    shards_dir: Path  = typer.Option(Path("webdataset_shards"), file_okay=False),
+    workers: int      = typer.Option(8),
+    shard_size: int   = typer.Option(100)
+):
+    """Incrementally reprocess only changed files."""
+    typer.echo("Smart‑update: Parquet → sharding")
+    parquet(wear_dir, parquet_dir, workers)
+    webdataset(wear_dir, shards_dir, shard_size, workers)
 
 @app.command()
-def parquet(input_dir: str = "Wear", output_dir: str = "parquet_data", workers: int = 8):
-    """
-    Convert the Friction Surfaces dataset into Parquet files and create metadata.
-    """
-    out_dir = convert_to_parquet_per_folder(base_dir=input_dir, output_dir=output_dir, workers=workers)
-    create_metadata_parquet(input_dir, out_dir)
-
-@app.command()
-def webdataset(input_dir: str = "Wear", output_dir: str = "webdataset_shards", shard_size: int = 100, workers: int = 8):
-    """
-    Create WebDataset shards from the dataset.
-    """
-    create_webdataset_shards(input_dir, output_dir, shard_size, workers=workers)
+def run_all(
+    wear_dir: Path    = typer.Option(..., exists=True, file_okay=False),
+    parquet_dir: Path = typer.Option(Path("parquet_data"), file_okay=False),
+    shards_dir: Path  = typer.Option(Path("webdataset_shards"), file_okay=False),
+    workers: int      = typer.Option(8),
+    shard_size: int   = typer.Option(100)
+):
+    """Full rebuild: Parquet → sharding."""
+    parquet(wear_dir, parquet_dir, workers)
+    webdataset(wear_dir, shards_dir, shard_size, workers)
 
 if __name__ == "__main__":
     app()

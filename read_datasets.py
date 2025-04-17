@@ -1,259 +1,235 @@
 #!/usr/bin/env python3
-import os
+"""
+read_datasets.py: Extract PNGs from Parquet-based dataset and
+decompress WebDataset shards using layout:
+
+    material/shape/direction/grit/weight/distance[/replicate]/map.png
+"""
 import io
 import json
 import tarfile
-import concurrent.futures
+import logging
 import base64
+import concurrent.futures
+from pathlib import Path
+from typing import Optional
+
 import pandas as pd
 from PIL import Image
-from rich.progress import Progress, TextColumn, BarColumn, TimeElapsedColumn, TimeRemainingColumn
 import typer
+from rich.progress import Progress, TextColumn, BarColumn, TimeElapsedColumn, TimeRemainingColumn
 
-app = typer.Typer(help="Extract images from Friction Surfaces Parquet files or decompress WebDataset shards.")
+# -----------------------------------
+# Configuration & Logging
+# -----------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger(__name__)
+app = typer.Typer(help="Tools for reading Friction Surfaces dataset.")
 
-#####################################
-# PARQUET EXTRACTION FUNCTIONS      #
-#####################################
-
-def read_parquet_metadata(parquet_dir: str) -> pd.DataFrame:
-    """
-    Read the metadata Parquet file containing folder information.
-    
-    Args:
-        parquet_dir: Directory where metadata.parquet is located.
-    Returns:
-        A DataFrame with metadata or None if not found.
-    """
-    metadata_file = os.path.join(parquet_dir, "metadata.parquet")
-    if not os.path.exists(metadata_file):
-        typer.echo(f"Metadata file not found: {metadata_file}")
-        return None
-    return pd.read_parquet(metadata_file, engine='pyarrow')
-
-def copy_image(row: pd.Series, dest_path: str) -> bool:
-    """
-    Recreate and save an image using only the embedded binary image data.
-    
-    Args:
-        row: A pandas Series containing image metadata and raw binary image data.
-        dest_path: The destination file path where the image will be saved.
-    Returns:
-        True if the image is saved successfully; otherwise, False.
-    """
-    try:
-        if 'image_data' in row and pd.notnull(row['image_data']):
-            image_data = row['image_data']
-            image_bytes = base64.b64decode(image_data) if isinstance(image_data, str) else image_data
-            img = Image.open(io.BytesIO(image_bytes))
-            img.save(dest_path)
-        else:
-            typer.echo(f"Warning: No embedded image data for {row.get('image_type', 'unknown')}. Skipping.")
-        return True
-    except Exception as e:
-        typer.echo(f"Error extracting image {row.get('image_type', 'unknown')} to {dest_path}: {str(e)}")
-        return False
-
-def extract_images(df: pd.DataFrame, output_dir: str, workers: int = 8) -> None:
-    """
-    Extract images from the combined DataFrame to a directory structure using only the embedded binary image data.
-    
-    Args:
-        df: DataFrame containing image metadata and embedded image data.
-        output_dir: Base output directory where images will be saved.
-        workers: Number of concurrent worker threads.
-    """
-    if df.empty:
-        typer.echo("No data to extract images from.")
-        return
-
-    os.makedirs(output_dir, exist_ok=True)
-    grouped = df.groupby(['material', 'grit', 'weight', 'distance'])
-    total_images = len(df)
-    
-    with Progress(
-        TextColumn("[bold blue]{task.description}"),
+# -----------------------------------
+# Progress Context
+# -----------------------------------
+def progress_context(total: int, description: str) -> Progress:
+    return Progress(
+        TextColumn(f"[bold cyan]{description}"),
         BarColumn(),
         TimeElapsedColumn(),
         TimeRemainingColumn()
-    ) as progress:
-        extract_task = progress.add_task(f"Extracting {total_images} images...", total=total_images)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = []
-            for (material, grit, weight, distance), group in grouped:
-                dest_dir = os.path.join(output_dir, material, grit, f"{weight}g", f"{distance}mm")
-                os.makedirs(dest_dir, exist_ok=True)
-                for _, row in group.iterrows():
-                    image_type = row['image_type']
-                    dest_file = os.path.join(dest_dir, f"{image_type}.png")
-                    futures.append(executor.submit(copy_image, row, dest_file))
-            # Update progress as each future completes:
-            for future in concurrent.futures.as_completed(futures):
-                future.result()  # Capture any exceptions.
-                progress.update(extract_task, advance=1)
-    typer.echo(f"Extracted {total_images} images to {output_dir}")
+    )
 
-def extract_images_by_query(material: str = None, grit: str = None, weight: str = None, distance: str = None,
-                            input_dir: str = "parquet_data", output_dir: str = "extracted_images", workers: int = 8) -> None:
-    """
-    Extract images based on query parameters from the Parquet metadata using only the embedded image data.
-    
-    Args:
-        material: Filter by material.
-        grit: Filter by grit.
-        weight: Filter by weight.
-        distance: Filter by distance.
-        input_dir: Directory containing Parquet data and metadata.
-        output_dir: Directory where extracted images will be saved.
-        workers: Number of concurrent worker threads.
-    """
-    metadata = read_parquet_metadata(input_dir)
-    if metadata is None:
+# -----------------------------------
+# PARQUET EXTRACTION
+# -----------------------------------
+def read_metadata(parquet_dir: Path) -> pd.DataFrame:
+    """Load the top-level metadata.parquet that indexes all Parquet shards."""
+    meta_file = parquet_dir / "metadata.parquet"
+    if not meta_file.exists():
+        logger.error(f"Metadata file not found: {meta_file}")
+        raise typer.Exit(code=1)
+    return pd.read_parquet(meta_file, engine="pyarrow")
+
+def extract_from_parquet(
+    parquet_dir: Path,
+    output_dir: Path,
+    material: Optional[str],
+    shape: Optional[str],
+    direction: Optional[str],
+    grit: Optional[int],
+    weight: Optional[int],
+    distance: Optional[int],
+    replicate: Optional[int],
+    workers: int
+):
+    """Filter metadata, load matching Parquet shards, and write out PNGs."""
+    df_meta = read_metadata(parquet_dir)
+
+    # apply filters
+    for col, val in [
+        ("material", material),
+        ("shape", shape),
+        ("direction", direction),
+        ("grit", grit),
+        ("weight", weight),
+        ("distance", distance),
+        ("replicate", replicate),
+    ]:
+        if val is not None:
+            df_meta = df_meta[df_meta[col] == val]
+
+    if df_meta.empty:
+        typer.echo("No matching entries in metadata.")
         return
-    filters = []
-    if material:
-        filters.append(f"material == '{material}'")
-    if grit:
-        filters.append(f"grit == '{grit}'")
-    if weight:
-        filters.append(f"weight == '{weight}'")
-    if distance:
-        filters.append(f"distance == '{distance}'")
-    query = " and ".join(filters) if filters else None
-    filtered = metadata.query(query) if query else metadata
-    if filtered.empty:
-        typer.echo(f"No files match the query: {query}")
-        return
-    typer.echo(f"Found {len(filtered)} matching folders.")
-    all_data = []
-    with Progress(
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TimeElapsedColumn(),
-        TimeRemainingColumn()
-    ) as progress:
-        read_task = progress.add_task("Reading Parquet files...", total=len(filtered))
-        for _, row in filtered.iterrows():
-            parquet_path = os.path.join(input_dir, row['parquet_path'])
+
+    # load all matching Parquets
+    shards = []
+    with progress_context(len(df_meta), "Loading Parquet shards") as prog:
+        task = prog.add_task("", total=len(df_meta))
+        for row in df_meta.itertuples(index=False):
+            path = parquet_dir / row.parquet_path
             try:
-                df = pd.read_parquet(parquet_path, engine='pyarrow')
-                all_data.append(df)
+                shards.append(pd.read_parquet(path, engine="pyarrow"))
             except Exception as e:
-                typer.echo(f"Error reading {parquet_path}: {str(e)}")
-            progress.update(read_task, advance=1)
-    if not all_data:
-        typer.echo("No data could be read from Parquet files.")
+                logger.warning(f"Failed to read {path}: {e}")
+            prog.update(task, advance=1)
+
+    if not shards:
+        typer.echo("No dataframes loaded; nothing to extract.")
         return
-    combined_df = pd.concat(all_data)
-    typer.echo(f"Total images to extract: {len(combined_df)}")
-    extract_images(combined_df, output_dir, workers)
 
-#########################################
-# WEBDATASET SHARD DECOMPRESSION BLOCK  #
-#########################################
+    df_all = pd.concat(shards, ignore_index=True)
+    total = len(df_all)
+    if total == 0:
+        typer.echo("No images present in loaded data.")
+        return
 
-def decompress_webdataset(input_dir: str, output_dir: str, workers: int = 8) -> None:
-    """
-    Decompress WebDataset shards (tar files) into a folder structure based on JSON metadata.
-    
-    For each tar shard in input_dir, this function extracts pairs of files:
-    <key>.jpg and <key>.json. The JSON file should contain keys such as 'material',
-    'grit', 'weight', 'distance', and 'image_type' to define the output structure.
-    
-    Args:
-        input_dir: Directory containing WebDataset tar files.
-        output_dir: Base output directory for decompressed images.
-        workers: Number of concurrent worker threads.
-    """
-    tar_files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith(".tar")]
+    # write out PNGs
+    with progress_context(total, "Writing PNGs") as prog:
+        task = prog.add_task("", total=total)
+        def _save(record):
+            # build destination directory
+            dest = (
+                output_dir
+                / record.material
+                / record.shape
+                / record.direction
+                / f"S{record.grit}"
+                / f"{record.weight}g"
+                / f"{record.distance}mm"
+            )
+            if hasattr(record, "replicate") and pd.notna(record.replicate):
+                dest = dest / f"rep{int(record.replicate)}"
+            dest.mkdir(parents=True, exist_ok=True)
+
+            out_file = dest / f"{record.image_type}.png"
+            data = record.image_data
+            # handle base64‐encoded strings or raw bytes
+            if isinstance(data, str):
+                data = base64.b64decode(data)
+            try:
+                img = Image.open(io.BytesIO(data))
+                img.save(out_file)
+            except Exception as e:
+                logger.warning(f"Failed saving {out_file}: {e}")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as exe:
+            futures = [exe.submit(_save, row) for row in df_all.itertuples(index=False)]
+            for _ in concurrent.futures.as_completed(futures):
+                prog.update(task, advance=1)
+
+    typer.echo(f"Extracted {total} images to {output_dir}")
+
+@app.command()
+def extract(
+    parquet_dir: Path = typer.Option(..., exists=True, file_okay=False, help="Parquet root (contains metadata.parquet)"),
+    output_dir: Path  = typer.Option(Path("extracted_images"), file_okay=False, help="Where to write PNGs"),
+    material: Optional[str]  = typer.Option(None, help="Filter by material"),
+    shape: Optional[str]     = typer.Option(None, help="Filter by shape"),
+    direction: Optional[str] = typer.Option(None, help="Filter by direction"),
+    grit: Optional[int]      = typer.Option(None, help="Filter by grit (e.g. 60)"),
+    weight: Optional[int]    = typer.Option(None, help="Filter by weight (e.g. 100)"),
+    distance: Optional[int]  = typer.Option(None, help="Filter by distance (e.g. 1200)"),
+    replicate: Optional[int] = typer.Option(None, help="Filter by replicate number"),
+    workers: int             = typer.Option(8, help="Parallel workers")
+):
+    """Extract PNGs from Parquet storage based on optional filters."""
+    extract_from_parquet(
+        parquet_dir, output_dir,
+        material, shape, direction, grit, weight, distance, replicate, workers
+    )
+
+# -----------------------------------
+# WEBDATASET DECOMPRESSION
+# -----------------------------------
+def decompress_shards(
+    shards_dir: Path,
+    output_dir: Path,
+    workers: int
+):
+    """Decompress WebDataset .tar shards back into PNG folders."""
+    tar_files = list(shards_dir.glob("*.tar"))
     if not tar_files:
-        typer.echo("No tar files (WebDataset shards) found in input directory.")
+        typer.echo(f"No .tar shards found in {shards_dir}")
         return
 
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Create a progress instance for decompression.
-    with Progress(
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TimeElapsedColumn(),
-        TimeRemainingColumn()
-    ) as progress:
-        task = progress.add_task("Decompressing shards...", total=len(tar_files))
-        
-        def process_shard(tar_path: str):
-            with tarfile.open(tar_path, 'r') as tar:
-                members = tar.getmembers()
-                # Group members by key (assume filenames like 000001.jpg and 000001.json)
-                samples = {}
-                for member in members:
-                    key, ext = os.path.splitext(member.name)
-                    if key not in samples:
-                        samples[key] = {}
-                    samples[key][ext] = member
-                for key, files in samples.items():
-                    if ".json" in files and ".jpg" in files:
-                        json_file = tar.extractfile(files[".json"])
-                        if not json_file:
+    with progress_context(len(tar_files), "Decompressing shards") as prog:
+        task = prog.add_task("", total=len(tar_files))
+
+        def _process(tar_path: Path):
+            try:
+                with tarfile.open(tar_path, "r") as tar:
+                    # group by key
+                    samples = {}
+                    for m in tar.getmembers():
+                        key, ext = Path(m.name).stem, Path(m.name).suffix
+                        samples.setdefault(key, {})[ext] = m
+
+                    for files in samples.values():
+                        j = files.get(".json"); i = files.get(".jpg") or files.get(".png")
+                        if not j or not i:
                             continue
+                        meta = json.load(tar.extractfile(j))
+                        dest = (
+                            output_dir
+                            / meta.get("material","unknown")
+                            / meta.get("shape","unknown")
+                            / meta.get("direction","unknown")
+                            / f"S{meta.get('grit','unknown')}"
+                            / f"{meta.get('weight','')}g"
+                            / f"{meta.get('distance','')}mm"
+                        )
+                        if meta.get("replicate") is not None:
+                            dest = dest / f"rep{meta['replicate']}"
+                        dest.mkdir(parents=True, exist_ok=True)
+
+                        out_file = dest / f"{meta.get('image_type','img')}.png"
+                        img_f = tar.extractfile(i)
                         try:
-                            meta = json.load(json_file)
+                            img = Image.open(img_f)
+                            img.save(out_file)
                         except Exception as e:
-                            typer.echo(f"Error parsing JSON in {files['.json'].name}: {e}")
-                            continue
-                        # Determine destination from metadata.
-                        mat = meta.get("material", "unknown")
-                        gr = meta.get("grit", "unknown")
-                        wt = meta.get("weight", "unknown") + "g"
-                        dist = meta.get("distance", "unknown") + "mm"
-                        img_type = meta.get("image_type", key)
-                        dest_dir = os.path.join(output_dir, mat, gr, wt, dist)
-                        os.makedirs(dest_dir, exist_ok=True)
-                        dest_file = os.path.join(dest_dir, f"{img_type}.png")
-                        jpg_file = tar.extractfile(files[".jpg"])
-                        if not jpg_file:
-                            continue
-                        try:
-                            img = Image.open(jpg_file)
-                            img.save(dest_file)
-                        except Exception as e:
-                            typer.echo(f"Error saving image from {files['.jpg'].name}: {e}")
+                            logger.warning(f"Failed saving {out_file}: {e}")
+            except Exception as e:
+                logger.error(f"Error in {tar_path}: {e}")
             return tar_path
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            for _ in executor.map(process_shard, tar_files):
-                progress.update(task, advance=1)
-    typer.echo(f"Decompressed WebDataset shards to {output_dir}")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as exe:
+            for _ in exe.map(_process, tar_files):
+                prog.update(task, advance=1)
 
-####################################
-# TYPER COMMANDS                   #
-####################################
+    typer.echo(f"Decompressed shards into {output_dir}")
 
-@app.command(name="extract")
-def extract_command(
-    input_dir: str = typer.Option("parquet_data", help="Input directory containing Parquet data and metadata."),
-    output_dir: str = typer.Option("extracted_images", help="Output directory for extracted images."),
-    material: str = typer.Option(None, help="Filter by material."),
-    grit: str = typer.Option(None, help="Filter by grit."),
-    weight: str = typer.Option(None, help="Filter by weight."),
-    distance: str = typer.Option(None, help="Filter by distance."),
-    workers: int = typer.Option(8, help="Number of concurrent worker threads.")
+@app.command()
+def decompress(
+    shards_dir: Path = typer.Option(..., exists=True, file_okay=False, help="Directory of .tar shards"),
+    output_dir: Path = typer.Option(Path("decompressed_images"), file_okay=False, help="Where to write PNGs"),
+    workers: int    = typer.Option(4, help="Parallel workers")
 ):
-    """
-    Extract images from Parquet files using only the embedded binary image data.
-    """
-    extract_images_by_query(material, grit, weight, distance, input_dir, output_dir, workers)
-
-@app.command(name="decompress-webdataset")
-def decompress_webdataset_command(
-    input_dir: str = typer.Option("webdataset_shards", help="Input directory containing WebDataset tar shards."),
-    output_dir: str = typer.Option("decompressed_webdataset", help="Output directory for decompressed images."),
-    workers: int = typer.Option(8, help="Number of concurrent worker threads.")
-):
-    """
-    Decompress WebDataset shards (tar files) into a folder structure using JSON metadata.
-    """
-    decompress_webdataset(input_dir, output_dir, workers)
+    """Decompress WebDataset tar shards into the original PNG hierarchy."""
+    decompress_shards(shards_dir, output_dir, workers)
 
 if __name__ == "__main__":
     app()
