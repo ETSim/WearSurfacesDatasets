@@ -45,7 +45,7 @@ def progress_context(total: int, description: str) -> Progress:
 # PARQUET EXTRACTION
 # -----------------------------------
 def read_metadata(parquet_dir: Path) -> pd.DataFrame:
-    """Load the top-level metadata.parquet that indexes all Parquet shards."""
+    """Load the top‐level metadata.parquet that indexes all Parquet shards."""
     meta_file = parquet_dir / "metadata.parquet"
     if not meta_file.exists():
         logger.error(f"Metadata file not found: {meta_file}")
@@ -67,7 +67,7 @@ def extract_from_parquet(
     """Filter metadata, load matching Parquet shards, and write out PNGs."""
     df_meta = read_metadata(parquet_dir)
 
-    # apply filters
+    # apply folder‐level filters
     for col, val in [
         ("material", material),
         ("shape", shape),
@@ -75,16 +75,15 @@ def extract_from_parquet(
         ("grit", grit),
         ("weight", weight),
         ("distance", distance),
-        ("replicate", replicate),
     ]:
         if val is not None:
             df_meta = df_meta[df_meta[col] == val]
 
     if df_meta.empty:
-        typer.echo("No matching entries in metadata.")
+        typer.echo("No matching shards in metadata.")
         return
 
-    # load all matching Parquets
+    # load all matching Parquet files
     shards = []
     with progress_context(len(df_meta), "Loading Parquet shards") as prog:
         task = prog.add_task("", total=len(df_meta))
@@ -97,20 +96,25 @@ def extract_from_parquet(
             prog.update(task, advance=1)
 
     if not shards:
-        typer.echo("No dataframes loaded; nothing to extract.")
+        typer.echo("No data loaded; aborting extraction.")
         return
 
     df_all = pd.concat(shards, ignore_index=True)
+
+    # apply record‐level replicate filter if requested
+    if replicate is not None and "replicate" in df_all.columns:
+        df_all = df_all[df_all.replicate == replicate]
+
     total = len(df_all)
     if total == 0:
-        typer.echo("No images present in loaded data.")
+        typer.echo("No images to extract after filtering.")
         return
 
     # write out PNGs
     with progress_context(total, "Writing PNGs") as prog:
         task = prog.add_task("", total=total)
+
         def _save(record):
-            # build destination directory
             dest = (
                 output_dir
                 / record.material
@@ -120,13 +124,12 @@ def extract_from_parquet(
                 / f"{record.weight}g"
                 / f"{record.distance}mm"
             )
-            if hasattr(record, "replicate") and pd.notna(record.replicate):
+            if getattr(record, "replicate", None) is not None:
                 dest = dest / f"rep{int(record.replicate)}"
             dest.mkdir(parents=True, exist_ok=True)
 
-            out_file = dest / f"{record.image_type}.png"
+            out_file = dest / f"{record.map_type}.png"
             data = record.image_data
-            # handle base64‐encoded strings or raw bytes
             if isinstance(data, str):
                 data = base64.b64decode(data)
             try:
@@ -158,7 +161,8 @@ def extract(
     """Extract PNGs from Parquet storage based on optional filters."""
     extract_from_parquet(
         parquet_dir, output_dir,
-        material, shape, direction, grit, weight, distance, replicate, workers
+        material, shape, direction,
+        grit, weight, distance, replicate, workers
     )
 
 # -----------------------------------
@@ -181,15 +185,14 @@ def decompress_shards(
         def _process(tar_path: Path):
             try:
                 with tarfile.open(tar_path, "r") as tar:
-                    # group by key
                     samples = {}
-                    for m in tar.getmembers():
-                        key, ext = Path(m.name).stem, Path(m.name).suffix
-                        samples.setdefault(key, {})[ext] = m
+                    for member in tar.getmembers():
+                        key, ext = Path(member.name).stem, Path(member.name).suffix
+                        samples.setdefault(key, {})[ext] = member
 
                     for files in samples.values():
-                        j = files.get(".json"); i = files.get(".jpg") or files.get(".png")
-                        if not j or not i:
+                        j, i = files.get(".json"), files.get(".jpg")
+                        if not (j and i):
                             continue
                         meta = json.load(tar.extractfile(j))
                         dest = (
@@ -205,16 +208,15 @@ def decompress_shards(
                             dest = dest / f"rep{meta['replicate']}"
                         dest.mkdir(parents=True, exist_ok=True)
 
-                        out_file = dest / f"{meta.get('image_type','img')}.png"
-                        img_f = tar.extractfile(i)
-                        try:
-                            img = Image.open(img_f)
-                            img.save(out_file)
-                        except Exception as e:
-                            logger.warning(f"Failed saving {out_file}: {e}")
+                        out_file = dest / f"{meta.get('map_type','map')}.png"
+                        with tar.extractfile(i) as img_f:
+                            try:
+                                img = Image.open(img_f)
+                                img.save(out_file)
+                            except Exception as e:
+                                logger.warning(f"Failed saving {out_file}: {e}")
             except Exception as e:
                 logger.error(f"Error in {tar_path}: {e}")
-            return tar_path
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as exe:
             for _ in exe.map(_process, tar_files):
