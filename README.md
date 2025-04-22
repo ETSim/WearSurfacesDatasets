@@ -104,7 +104,7 @@ All commands assume your raw PNGs live in `wear/`.
 #### 1. Parquet Conversion
 
 ```bash
-python3 scripts/generate_datasets.py parquet \
+python3 generate_datasets.py parquet \
   --input-dir wear \
   --output-dir data/parquet_data \
   --workers 8
