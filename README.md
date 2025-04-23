@@ -61,6 +61,13 @@ Requires Python 3.7+ and:
 pip install pandas numpy pillow rich pyarrow typer
 ```
 
+```
+git clone https://github.com/ETSim/WearSurfacesDatasets
+cd WearSurfacesDatasets
+git lfs fetch --all
+python3 read_datasets.py decompress --shards-dir data/shards --output-dir data/images --workers 4
+```
+
 ---
 
 ## 🚀 Usage
