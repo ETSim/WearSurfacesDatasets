@@ -1,0 +1,1694 @@
+<!doctype html>
+
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>WebGPU Material Viewer</title>
+    <style>
+      body { margin: 0; padding: 0; background-color: #202020; font-family: Arial, sans-serif; }
+      canvas { display: block; width: 100vw; height: 100vh; }
+      .controls { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px; max-height: 90vh; overflow-y: auto; width: 280px; }
+      .control-section { margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 10px; }
+      .control-section h3 { margin-top: 5px; margin-bottom: 10px; }
+      label { display: block; margin-bottom: 5px; }
+      input[type="range"] { width: 100%; }
+      input[type="checkbox"] { margin-right: 5px; }
+      select { width: 100%; margin-bottom: 8px; background: #333; color: white; border: 1px solid #555; padding: 4px; }
+      button { background: #333; color: white; border: 1px solid #555; padding: 6px 12px; margin: 4px; border-radius: 4px; cursor: pointer; }
+      button:hover { background: #444; }
+      .button-group { display: flex; flex-wrap: wrap; justify-content: space-between; }
+      .tabs { display: flex; margin-bottom: 10px; }
+      .tab { padding: 8px 15px; background: #333; cursor: pointer; border-radius: 4px 4px 0 0; margin-right: 2px; }
+      .tab.active { background: #555; }
+      .mode-button { width: calc(50% - 8px); margin: 4px; padding: 8px; }
+      .mode-button.active { background: #555; }
+      .download-section { display: flex; justify-content: space-between; margin-top: 10px; }
+      .download-button { flex-grow: 1; margin: 0 2px; }
+    </style>
+  </head>
+  <body>
+    <canvas width="800" height="600"></canvas>
+    <div class="controls">
+      <div class="control-section">
+        <h3>Display Mode</h3>
+        <div class="button-group">
+          <button id="mode2D" class="mode-button active">2D Mode</button>
+          <button id="mode3D" class="mode-button">3D Mode</button>
+        </div>
+      </div>
+
+      <div id="mapping-controls" class="control-section">
+        <h3>PBR Mapping</h3>
+        <label>
+          <input type="checkbox" id="baseColorMapping" checked> Base Color
+        </label>
+        <label>
+          <input type="checkbox" id="normalMapping" checked> Normal Mapping
+        </label>
+        <label>
+          <input type="checkbox" id="roughnessMapping" checked> Roughness
+        </label>
+        <label>
+          <input type="checkbox" id="metallicMapping" checked> Metallic
+        </label>
+        <label>
+          <input type="checkbox" id="aoMapping"> Ambient Occlusion
+        </label>
+        <label>
+          <input type="checkbox" id="displacementMapping"> Displacement (Visual)
+        </label>
+        <label>
+          <input type="checkbox" id="emissiveMapping"> Emissive
+        </label>
+      </div>
+
+      <div id="filter-controls" class="control-section">
+        <h3>Filters</h3>
+        <label>
+          <input type="checkbox" id="invertFilter"> Invert Colors
+        </label>
+        <label>
+          <input type="checkbox" id="edgeFilter"> Edge Detection
+          <select id="edgeFilterType">
+            <option value="sobel">Sobel</option>
+            <option value="scharr">Scharr</option>
+          </select>
+        </label>
+        <label>
+          Blur/Sharpen:
+          <input type="range" id="blurSharpLevel" min="-1" max="1" value="0" step="0.1">
+          <span id="blurSharpValue">0</span>
+        </label>
+      </div>
+
+      <div id="channel-controls" class="control-section">
+        <h3>Channel Controls</h3>
+        <label>
+          <input type="checkbox" id="showR" checked> R Channel
+        </label>
+        <label>
+          <input type="checkbox" id="showG" checked> G Channel
+        </label>
+        <label>
+          <input type="checkbox" id="showB" checked> B Channel
+        </label>
+        <label>
+          <input type="checkbox" id="showAlpha" checked> Alpha Channel
+        </label>
+        <label>
+          Opacity:
+          <input type="range" id="opacity" min="0" max="1" value="1" step="0.01">
+          <span id="opacityValue">100%</span>
+        </label>
+      </div>
+
+      <div id="3d-controls" class="control-section">
+        <h3>3D Controls</h3>
+        <label>
+          Model:
+          <select id="modelSelect">
+            <option value="plane">Plane</option>
+            <option value="cube">Cube</option>
+            <option value="sphere">Sphere</option>
+            <option value="cylinder">Cylinder</option>
+            <option value="teapot">Teapot</option>
+          </select>
+        </label>
+        <label>
+          Z Range:
+          <input type="range" id="zRange" min="0" max="1" value="0.1" step="0.01">
+          <span id="zRangeValue">0.1</span>
+        </label>
+        <label>
+          <input type="checkbox" id="autoRotate" checked> Auto Rotate
+        </label>
+        <div class="button-group">
+          <button id="resetView">Reset View</button>
+        </div>
+      </div>
+
+      <div id="light-controls" class="control-section">
+        <h3>Lighting</h3>
+        <label>
+          Light Position X:
+          <input type="range" id="lightPosX" min="-5" max="5" value="2" step="0.1">
+        </label>
+        <label>
+          Light Position Y:
+          <input type="range" id="lightPosY" min="-5" max="5" value="2" step="0.1">
+        </label>
+        <label>
+          Light Position Z:
+          <input type="range" id="lightPosZ" min="-5" max="5" value="2" step="0.1">
+        </label>
+        <label>
+          Light Intensity:
+          <input type="range" id="lightIntensity" min="0" max="10" value="4" step="0.1">
+        </label>
+      </div>
+
+      <div id="download-controls" class="control-section">
+        <h3>Export</h3>
+        <div class="download-section">
+          <button id="downloadPNG" class="download-button">PNG</button>
+          <button id="downloadJPG" class="download-button">JPG</button>
+          <button id="downloadTIFF" class="download-button">TIFF</button>
+        </div>
+        <button id="downloadAllMaps">Download All Maps</button>
+      </div>
+    </div>
+    <script type="module">
+      // WebGPU initializations
+      if (!navigator.gpu) {
+        alert("WebGPU is not supported on this browser. Please try a newer version of Chrome or Edge.");
+        throw new Error("WebGPU not supported");
+      }
+
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) {
+        alert("No appropriate GPUAdapter found.");
+        throw new Error("No appropriate GPUAdapter found.");
+      }
+
+      const device = await adapter.requestDevice();
+      console.log("WebGPU device initialized");
+
+      // Canvas setup
+      const canvas = document.querySelector("canvas");
+      const context = canvas.getContext("webgpu");
+      const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
+      context.configure({
+        device: device,
+        format: canvasFormat,
+        alphaMode: "premultiplied",
+      });
+
+      // Resize canvas to match window size
+      function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+      resizeCanvas();
+      window.addEventListener("resize", resizeCanvas);
+
+      // Application state
+      const appState = {
+        mode: "2D", // "2D" or "3D"
+        model: "plane",
+        autoRotate: true,
+        rotation: { x: 0, y: 0 },
+        dragState: { dragging: false, lastX: 0, lastY: 0 },
+        lightPos: { x: 2, y: 2, z: 2 },
+        lightIntensity: 4,
+        zRange: 0.1,
+        invertColors: false,
+        edgeDetection: false,
+        edgeDetectionType: "sobel",
+        blurSharpLevel: 0,
+        opacity: 1.0,
+        showChannels: { r: true, g: true, b: true, a: true },
+        maps: {
+          baseColor: true,
+          normal: true,
+          roughness: true,
+          metallic: true,
+          ao: false,
+          displacement: false,
+          emissive: false
+        }
+      };
+
+      // Mouse interaction setup
+      canvas.addEventListener("mousedown", (e) => {
+        appState.dragState.dragging = true;
+        appState.dragState.lastX = e.clientX;
+        appState.dragState.lastY = e.clientY;
+      });
+
+      canvas.addEventListener("mouseup", () => {
+        appState.dragState.dragging = false;
+      });
+
+      canvas.addEventListener("mousemove", (e) => {
+        if (appState.dragState.dragging) {
+          const deltaX = e.clientX - appState.dragState.lastX;
+          const deltaY = e.clientY - appState.dragState.lastY;
+          
+          appState.rotation.y += deltaX * 0.01;
+          appState.rotation.x += deltaY * 0.01;
+          
+          appState.dragState.lastX = e.clientX;
+          appState.dragState.lastY = e.clientY;
+        }
+      });
+
+      // UI event listeners
+      document.getElementById("mode2D").addEventListener("click", () => {
+        appState.mode = "2D";
+        document.getElementById("mode2D").classList.add("active");
+        document.getElementById("mode3D").classList.remove("active");
+      });
+
+      document.getElementById("mode3D").addEventListener("click", () => {
+        appState.mode = "3D";
+        document.getElementById("mode3D").classList.add("active");
+        document.getElementById("mode2D").classList.remove("active");
+      });
+
+      document.getElementById("modelSelect").addEventListener("change", (e) => {
+        appState.model = e.target.value;
+      });
+
+      document.getElementById("autoRotate").addEventListener("change", (e) => {
+        appState.autoRotate = e.target.checked;
+      });
+
+      document.getElementById("resetView").addEventListener("click", () => {
+        appState.rotation = { x: 0, y: 0 };
+      });
+
+      document.getElementById("lightPosX").addEventListener("input", (e) => {
+        appState.lightPos.x = parseFloat(e.target.value);
+      });
+
+      document.getElementById("lightPosY").addEventListener("input", (e) => {
+        appState.lightPos.y = parseFloat(e.target.value);
+      });
+
+      document.getElementById("lightPosZ").addEventListener("input", (e) => {
+        appState.lightPos.z = parseFloat(e.target.value);
+      });
+
+      document.getElementById("lightIntensity").addEventListener("input", (e) => {
+        appState.lightIntensity = parseFloat(e.target.value);
+      });
+
+      document.getElementById("zRange").addEventListener("input", (e) => {
+        appState.zRange = parseFloat(e.target.value);
+        document.getElementById("zRangeValue").textContent = appState.zRange.toFixed(2);
+      });
+
+      document.getElementById("invertFilter").addEventListener("change", (e) => {
+        appState.invertColors = e.target.checked;
+      });
+
+      document.getElementById("edgeFilter").addEventListener("change", (e) => {
+        appState.edgeDetection = e.target.checked;
+      });
+
+      document.getElementById("edgeFilterType").addEventListener("change", (e) => {
+        appState.edgeDetectionType = e.target.value;
+      });
+
+      document.getElementById("blurSharpLevel").addEventListener("input", (e) => {
+        appState.blurSharpLevel = parseFloat(e.target.value);
+        document.getElementById("blurSharpValue").textContent = appState.blurSharpLevel.toFixed(1);
+      });
+
+      document.getElementById("opacity").addEventListener("input", (e) => {
+        appState.opacity = parseFloat(e.target.value);
+        document.getElementById("opacityValue").textContent = `${Math.round(appState.opacity * 100)}%`;
+      });
+
+      document.getElementById("showR").addEventListener("change", (e) => {
+        appState.showChannels.r = e.target.checked;
+      });
+
+      document.getElementById("showG").addEventListener("change", (e) => {
+        appState.showChannels.g = e.target.checked;
+      });
+
+      document.getElementById("showB").addEventListener("change", (e) => {
+        appState.showChannels.b = e.target.checked;
+      });
+
+      document.getElementById("showAlpha").addEventListener("change", (e) => {
+        appState.showChannels.a = e.target.checked;
+      });
+
+      document.getElementById("baseColorMapping").addEventListener("change", (e) => {
+        appState.maps.baseColor = e.target.checked;
+      });
+
+      document.getElementById("normalMapping").addEventListener("change", (e) => {
+        appState.maps.normal = e.target.checked;
+      });
+
+      document.getElementById("roughnessMapping").addEventListener("change", (e) => {
+        appState.maps.roughness = e.target.checked;
+      });
+
+      document.getElementById("metallicMapping").addEventListener("change", (e) => {
+        appState.maps.metallic = e.target.checked;
+      });
+
+      document.getElementById("aoMapping").addEventListener("change", (e) => {
+        appState.maps.ao = e.target.checked;
+      });
+
+      document.getElementById("displacementMapping").addEventListener("change", (e) => {
+        appState.maps.displacement = e.target.checked;
+      });
+
+      document.getElementById("emissiveMapping").addEventListener("change", (e) => {
+        appState.maps.emissive = e.target.checked;
+      });
+
+      // Export functionality
+      document.getElementById("downloadPNG").addEventListener("click", () => {
+        downloadCanvasAsImage("png");
+      });
+
+      document.getElementById("downloadJPG").addEventListener("click", () => {
+        downloadCanvasAsImage("jpg");
+      });
+
+      document.getElementById("downloadTIFF").addEventListener("click", () => {
+        downloadCanvasAsImage("tiff");
+      });
+
+      document.getElementById("downloadAllMaps").addEventListener("click", () => {
+        // In a real implementation, this would save each texture
+        alert("This would download all texture maps in a production environment.");
+      });
+
+      function downloadCanvasAsImage(format) {
+        // For demo purposes this just downloads the current canvas view
+        const link = document.createElement('a');
+        const mimeType = format === 'jpg' ? 'image/jpeg' : 
+                        format === 'tiff' ? 'image/tiff' : 'image/png';
+        
+        // For this demo, we'll just use PNG for all formats since browsers don't natively support TIFF
+        const actualFormat = format === 'tiff' ? 'png' : format;
+        
+        link.download = `material-preview.${actualFormat}`;
+        link.href = canvas.toDataURL(mimeType, 0.9);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      // Vertex buffers for various 3D models
+      function createPlaneGeometry(device) {
+        const vertices = new Float32Array([
+          // Position (x,y,z)    // TexCoords (u,v)  // Normal (x,y,z)     // Tangent (x,y,z)
+          -1.0, -1.0, 0.0,       0.0, 1.0,           0.0, 0.0, 1.0,        1.0, 0.0, 0.0,    // Bottom-left
+           1.0, -1.0, 0.0,       1.0, 1.0,           0.0, 0.0, 1.0,        1.0, 0.0, 0.0,    // Bottom-right
+           1.0,  1.0, 0.0,       1.0, 0.0,           0.0, 0.0, 1.0,        1.0, 0.0, 0.0,    // Top-right
+          -1.0,  1.0, 0.0,       0.0, 0.0,           0.0, 0.0, 1.0,        1.0, 0.0, 0.0,    // Top-left
+        ]);
+
+        const indices = new Uint16Array([
+          0, 1, 2,  // First triangle
+          2, 3, 0   // Second triangle
+        ]);
+
+        return { vertices, indices, topology: "triangle-list" };
+      }
+
+      function createCubeGeometry(device) {
+        // A simple cube with positions, UVs, normals and tangents
+        const s = 0.5; // half size
+        const vertices = new Float32Array([
+          // Front face
+          -s, -s,  s,      0.0, 1.0,           0.0, 0.0, 1.0,        1.0, 0.0, 0.0,
+           s, -s,  s,      1.0, 1.0,           0.0, 0.0, 1.0,        1.0, 0.0, 0.0,
+           s,  s,  s,      1.0, 0.0,           0.0, 0.0, 1.0,        1.0, 0.0, 0.0,
+          -s,  s,  s,      0.0, 0.0,           0.0, 0.0, 1.0,        1.0, 0.0, 0.0,
+          
+          // Back face
+          -s, -s, -s,      1.0, 1.0,           0.0, 0.0, -1.0,       -1.0, 0.0, 0.0,
+           s, -s, -s,      0.0, 1.0,           0.0, 0.0, -1.0,       -1.0, 0.0, 0.0,
+           s,  s, -s,      0.0, 0.0,           0.0, 0.0, -1.0,       -1.0, 0.0, 0.0,
+          -s,  s, -s,      1.0, 0.0,           0.0, 0.0, -1.0,       -1.0, 0.0, 0.0,
+          
+          // Top face
+          -s,  s, -s,      0.0, 1.0,           0.0, 1.0, 0.0,        1.0, 0.0, 0.0,
+           s,  s, -s,      1.0, 1.0,           0.0, 1.0, 0.0,        1.0, 0.0, 0.0,
+           s,  s,  s,      1.0, 0.0,           0.0, 1.0, 0.0,        1.0, 0.0, 0.0,
+          -s,  s,  s,      0.0, 0.0,           0.0, 1.0, 0.0,        1.0, 0.0, 0.0,
+          
+          // Bottom face
+          -s, -s, -s,      0.0, 0.0,           0.0, -1.0, 0.0,       1.0, 0.0, 0.0,
+           s, -s, -s,      1.0, 0.0,           0.0, -1.0, 0.0,       1.0, 0.0, 0.0,
+           s, -s,  s,      1.0, 1.0,           0.0, -1.0, 0.0,       1.0, 0.0, 0.0,
+          -s, -s,  s,      0.0, 1.0,           0.0, -1.0, 0.0,       1.0, 0.0, 0.0,
+          
+          // Right face
+           s, -s, -s,      0.0, 1.0,           1.0, 0.0, 0.0,        0.0, 0.0, -1.0,
+           s,  s, -s,      0.0, 0.0,           1.0, 0.0, 0.0,        0.0, 0.0, -1.0,
+           s,  s,  s,      1.0, 0.0,           1.0, 0.0, 0.0,        0.0, 0.0, -1.0,
+           s, -s,  s,      1.0, 1.0,           1.0, 0.0, 0.0,        0.0, 0.0, -1.0,
+          
+          // Left face
+          -s, -s, -s,      1.0, 1.0,           -1.0, 0.0, 0.0,       0.0, 0.0, 1.0,
+          -s,  s, -s,      1.0, 0.0,           -1.0, 0.0, 0.0,       0.0, 0.0, 1.0,
+          -s,  s,  s,      0.0, 0.0,           -1.0, 0.0, 0.0,       0.0, 0.0, 1.0,
+          -s, -s,  s,      0.0, 1.0,           -1.0, 0.0, 0.0,       0.0, 0.0, 1.0,
+        ]);
+
+        const indices = new Uint16Array([
+          0, 1, 2,  2, 3, 0,    // Front face
+          4, 5, 6,  6, 7, 4,    // Back face
+          8, 9, 10, 10, 11, 8,  // Top face
+          12, 13, 14, 14, 15, 12, // Bottom face
+          16, 17, 18, 18, 19, 16, // Right face
+          20, 21, 22, 22, 23, 20  // Left face
+        ]);
+
+        return { vertices, indices, topology: "triangle-list" };
+      }
+
+      function createSphereGeometry(device) {
+        // Create a UV sphere with normals and tangents
+        const radius = 0.7;
+        const latitudeBands = 16;
+        const longitudeBands = 16;
+        
+        const positions = [];
+        const texCoords = [];
+        const normals = [];
+        const tangents = [];
+        const indices = [];
+        
+        // Calculate vertices
+        for (let lat = 0; lat <= latitudeBands; lat++) {
+          const theta = lat * Math.PI / latitudeBands;
+          const sinTheta = Math.sin(theta);
+          const cosTheta = Math.cos(theta);
+          
+          for (let lon = 0; lon <= longitudeBands; lon++) {
+            const phi = lon * 2 * Math.PI / longitudeBands;
+            const sinPhi = Math.sin(phi);
+            const cosPhi = Math.cos(phi);
+            
+            // Position
+            const x = cosPhi * sinTheta;
+            const y = cosTheta;
+            const z = sinPhi * sinTheta;
+            positions.push(radius * x, radius * y, radius * z);
+            
+            // Texture coordinates
+            texCoords.push(1 - (lon / longitudeBands), 1 - (lat / latitudeBands));
+            
+            // Normal
+            normals.push(x, y, z);
+            
+            // Tangent (approximate)
+            const tx = -sinPhi;
+            const ty = 0;
+            const tz = cosPhi;
+            const tangentLength = Math.sqrt(tx*tx + ty*ty + tz*tz);
+            tangents.push(tx/tangentLength, ty/tangentLength, tz/tangentLength);
+          }
+        }
+        
+        // Calculate indices
+        for (let lat = 0; lat < latitudeBands; lat++) {
+          for (let lon = 0; lon < longitudeBands; lon++) {
+            const first = (lat * (longitudeBands + 1)) + lon;
+            const second = first + longitudeBands + 1;
+            
+            indices.push(first, second, first + 1);
+            indices.push(second, second + 1, first + 1);
+          }
+        }
+        
+        // Interleave vertex data
+        const interleavedVertices = new Float32Array(positions.length + texCoords.length * 2 + normals.length + tangents.length);
+        let vertexIndex = 0;
+        
+        for (let i = 0; i < positions.length / 3; i++) {
+          // Position (x, y, z)
+          interleavedVertices[vertexIndex++] = positions[i * 3];
+          interleavedVertices[vertexIndex++] = positions[i * 3 + 1];
+          interleavedVertices[vertexIndex++] = positions[i * 3 + 2];
+          
+          // Texture coordinates (u, v)
+          interleavedVertices[vertexIndex++] = texCoords[i * 2];
+          interleavedVertices[vertexIndex++] = texCoords[i * 2 + 1];
+          
+          // Normal (x, y, z)
+          interleavedVertices[vertexIndex++] = normals[i * 3];
+          interleavedVertices[vertexIndex++] = normals[i * 3 + 1];
+          interleavedVertices[vertexIndex++] = normals[i * 3 + 2];
+          
+          // Tangent (x, y, z)
+          interleavedVertices[vertexIndex++] = tangents[i * 3];
+          interleavedVertices[vertexIndex++] = tangents[i * 3 + 1];
+          interleavedVertices[vertexIndex++] = tangents[i * 3 + 2];
+        }
+        
+        return {
+          vertices: interleavedVertices,
+          indices: new Uint16Array(indices),
+          topology: "triangle-list"
+        };
+      }
+
+      function createCylinderGeometry(device) {
+        // Create a cylinder with caps
+        const radius = 0.5;
+        const height = 1.0;
+        const segments = 16;
+        
+        const positions = [];
+        const texCoords = [];
+        const normals = [];
+        const tangents = [];
+        const indices = [];
+        
+        // Create vertices for the sides
+        for (let i = 0; i <= segments; i++) {
+          const theta = i * 2 * Math.PI / segments;
+          const x = Math.cos(theta);
+          const z = Math.sin(theta);
+          
+          // Bottom vertex
+          positions.push(radius * x, -height/2, radius * z);
+          texCoords.push(i / segments, 0);
+          normals.push(x, 0, z);
+          tangents.push(-z, 0, x); // Tangent orthogonal to normal
+          
+          // Top vertex
+          positions.push(radius * x, height/2, radius * z);
+          texCoords.push(i / segments, 1);
+          normals.push(x, 0, z);
+          tangents.push(-z, 0, x);
+        }
+        
+        // Create indices for the sides
+        for (let i = 0; i < segments; i++) {
+          const bottomLeft = i * 2;
+          const bottomRight = (i + 1) * 2;
+          const topLeft = bottomLeft + 1;
+          const topRight = bottomRight + 1;
+          
+          indices.push(bottomLeft, bottomRight, topRight);
+          indices.push(bottomLeft, topRight, topLeft);
+        }
+        
+        // Add top and bottom cap centers
+        const bottomCenterIndex = positions.length / 3;
+        positions.push(0, -height/2, 0);
+        texCoords.push(0.5, 0.5);
+        normals.push(0, -1, 0);
+        tangents.push(1, 0, 0);
+        
+        const topCenterIndex = positions.length / 3;
+        positions.push(0, height/2, 0);
+        texCoords.push(0.5, 0.5);
+        normals.push(0, 1, 0);
+        tangents.push(1, 0, 0);
+        
+        // Create cap vertices
+        for (let i = 0; i <= segments; i++) {
+          const theta = i * 2 * Math.PI / segments;
+          const x = Math.cos(theta);
+          const z = Math.sin(theta);
+          
+          // Bottom cap vertex
+          positions.push(radius * x, -height/2, radius * z);
+          texCoords.push((x + 1) / 2, (z + 1) / 2);
+          normals.push(0, -1, 0);
+          tangents.push(1, 0, 0);
+          
+          // Top cap vertex
+          positions.push(radius * x, height/2, radius * z);
+          texCoords.push((x + 1) / 2, (z + 1) / 2);
+          normals.push(0, 1, 0);
+          tangents.push(1, 0, 0);
+        }
+        
+        // Create indices for caps
+        const bottomCapStart = topCenterIndex + 1;
+        const topCapStart = bottomCapStart + segments + 1;
+        
+        for (let i = 0; i < segments; i++) {
+          // Bottom cap
+          indices.push(
+            bottomCenterIndex,
+            bottomCapStart + i + 1,
+            bottomCapStart + i
+          );
+          
+          // Top cap
+          indices.push(
+            topCenterIndex,
+            topCapStart + i,
+            topCapStart + i + 1
+          );
+        }
+        
+        // Interleave vertex data
+        const interleavedVertices = new Float32Array(positions.length + texCoords.length * 2 + normals.length + tangents.length);
+        let vertexIndex = 0;
+        
+        for (let i = 0; i < positions.length / 3; i++) {
+          // Position (x, y, z)
+          interleavedVertices[vertexIndex++] = positions[i * 3];
+          interleavedVertices[vertexIndex++] = positions[i * 3 + 1];
+          interleavedVertices[vertexIndex++] = positions[i * 3 + 2];
+          
+          // Texture coordinates (u, v)
+          interleavedVertices[vertexIndex++] = texCoords[i * 2];
+          interleavedVertices[vertexIndex++] = texCoords[i * 2 + 1];
+          
+          // Normal (x, y, z)
+          interleavedVertices[vertexIndex++] = normals[i * 3];
+          interleavedVertices[vertexIndex++] = normals[i * 3 + 1];
+          interleavedVertices[vertexIndex++] = normals[i * 3 + 2];
+          
+          // Tangent (x, y, z)
+          interleavedVertices[vertexIndex++] = tangents[i * 3];
+          interleavedVertices[vertexIndex++] = tangents[i * 3 + 1];
+          interleavedVertices[vertexIndex++] = tangents[i * 3 + 2];
+        }
+        
+        return {
+          vertices: interleavedVertices,
+          indices: new Uint16Array(indices),
+          topology: "triangle-list"
+        };
+      }
+
+      function createTeapotGeometry(device) {
+        // Since a full teapot is complex, we'll create a simplified version
+        // using a flattened cylinder as a stand-in
+        const radius = 0.7;
+        const height = 0.4;
+        const segments = 16;
+        
+        const positions = [];
+        const texCoords = [];
+        const normals = [];
+        const tangents = [];
+        const indices = [];
+        
+        // Create vertices for the sides
+        for (let i = 0; i <= segments; i++) {
+          const theta = i * 2 * Math.PI / segments;
+          const x = Math.cos(theta);
+          const z = Math.sin(theta);
+          
+          // Bottom vertex
+          positions.push(radius * x, -height/2, radius * z);
+          texCoords.push(i / segments, 0);
+          normals.push(x, 0, z);
+          tangents.push(-z, 0, x);
+          
+          // Top vertex
+          positions.push(radius * x, height/2, radius * z);
+          texCoords.push(i / segments, 1);
+          normals.push(x, 0, z);
+          tangents.push(-z, 0, x);
+        }
+        
+        // Create indices for the sides
+        for (let i = 0; i < segments; i++) {
+          const bottomLeft = i * 2;
+          const bottomRight = (i + 1) * 2;
+          const topLeft = bottomLeft + 1;
+          const topRight = bottomRight + 1;
+          
+          indices.push(bottomLeft, bottomRight, topRight);
+          indices.push(bottomLeft, topRight, topLeft);
+        }
+        
+        // Add spout
+        const spoutBaseIndex = positions.length / 3;
+        const spoutLength = 0.6;
+        const spoutWidth = 0.2;
+        
+        // Spout base (at +z side)
+        positions.push(0, 0, radius + 0.1);
+        texCoords.push(0.5, 0.5);
+        normals.push(0, 0, 1);
+        tangents.push(1, 0, 0);
+        
+        // Spout tip
+        positions.push(0, 0, radius + spoutLength);
+        texCoords.push(0.5, 0.0);
+        normals.push(0, 0, 1);
+        tangents.push(1, 0, 0);
+        
+        // Add handle (at -z side)
+        const handleBaseIndex = positions.length / 3;
+        const handleRadius = 0.3;
+        const handleSegments = 8;
+        
+        for (let i = 0; i <= handleSegments; i++) {
+          const angle = Math.PI * i / handleSegments;
+          const x = Math.sin(angle) * handleRadius;
+          const z = -radius - Math.cos(angle) * handleRadius;
+          
+          positions.push(x, 0, z);
+          texCoords.push(i / handleSegments, 0.5);
+          normals.push(x, 0, z + radius);
+          tangents.push(1, 0, 0);
+        }
+        
+        // Create indices for handle
+        for (let i = 0; i < handleSegments; i++) {
+          if (i < handleSegments - 1) {
+            indices.push(handleBaseIndex + i, handleBaseIndex + i + 1, handleBaseIndex);
+          }
+        }
+        
+        // Create cap vertices
+        for (let i = 0; i <= segments; i++) {
+          const theta = i * 2 * Math.PI / segments;
+          const x = Math.cos(theta) * radius;
+          const z = Math.sin(theta) * radius;
+          
+          // Top cap
+          positions.push(x, height/2, z);
+          texCoords.push((x / radius + 1) / 2, (z / radius + 1) / 2);
+          normals.push(0, 1, 0);
+          tangents.push(1, 0, 0);
+        }
+        
+        // Add center point for top cap
+        const topCenterIndex = positions.length / 3;
+        positions.push(0, height/2, 0);
+        texCoords.push(0.5, 0.5);
+        normals.push(0, 1, 0);
+        tangents.push(1, 0, 0);
+        
+        // Create indices for top cap
+        const topCapStart = spoutBaseIndex + 2 + handleSegments + 1;
+        for (let i = 0; i < segments; i++) {
+          indices.push(topCenterIndex, topCapStart + i, topCapStart + (i + 1) % (segments + 1));
+        }
+        
+        // Interleave vertex data
+        const interleavedVertices = new Float32Array(positions.length + texCoords.length * 2 + normals.length + tangents.length);
+        let vertexIndex = 0;
+        
+        for (let i = 0; i < positions.length / 3; i++) {
+          // Position (x, y, z)
+          interleavedVertices[vertexIndex++] = positions[i * 3];
+          interleavedVertices[vertexIndex++] = positions[i * 3 + 1];
+          interleavedVertices[vertexIndex++] = positions[i * 3 + 2];
+          
+          // Texture coordinates (u, v)
+          interleavedVertices[vertexIndex++] = texCoords[i * 2];
+          interleavedVertices[vertexIndex++] = texCoords[i * 2 + 1];
+          
+          // Normal (x, y, z)
+          interleavedVertices[vertexIndex++] = normals[i * 3];
+          interleavedVertices[vertexIndex++] = normals[i * 3 + 1];
+          interleavedVertices[vertexIndex++] = normals[i * 3 + 2];
+          
+          // Tangent (x, y, z)
+          interleavedVertices[vertexIndex++] = tangents[i * 3];
+          interleavedVertices[vertexIndex++] = tangents[i * 3 + 1];
+          interleavedVertices[vertexIndex++] = tangents[i * 3 + 2];
+        }
+        
+        return {
+          vertices: interleavedVertices,
+          indices: new Uint16Array(indices),
+          topology: "triangle-list"
+        };
+      }
+
+      // Get geometry based on selected model
+      function getModelGeometry(device) {
+        switch (appState.model) {
+          case "cube": return createCubeGeometry(device);
+          case "sphere": return createSphereGeometry(device);
+          case "cylinder": return createCylinderGeometry(device);
+          case "teapot": return createTeapotGeometry(device);
+          default: return createPlaneGeometry(device);
+        }
+      }
+
+      // Load textures
+      async function loadTexture(device, url) {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = async () => {
+            const imageBitmap = await createImageBitmap(img);
+            
+            const texture = device.createTexture({
+              label: url,
+              size: [imageBitmap.width, imageBitmap.height, 1],
+              format: "rgba8unorm",
+              usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            
+            device.queue.copyExternalImageToTexture(
+              { source: imageBitmap },
+              { texture: texture },
+              [imageBitmap.width, imageBitmap.height]
+            );
+            
+            resolve(texture);
+          };
+          img.onerror = () => {
+            console.error(`Failed to load image: ${url}`);
+            // Create a 1x1 placeholder texture with a warning color
+            const texture = device.createTexture({
+              label: `Failed to load: ${url}`,
+              size: [1, 1, 1],
+              format: "rgba8unorm",
+              usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            
+            // Create a magenta pixel as a placeholder
+            const placeholderData = new Uint8Array([255, 0, 255, 255]);
+            device.queue.writeTexture(
+              { texture: texture },
+              placeholderData,
+              { bytesPerRow: 4 },
+              [1, 1]
+            );
+            
+            resolve(texture);
+          };
+          // Set the crossOrigin attribute to allow loading from local files
+          img.crossOrigin = "anonymous";
+          img.src = url;
+        });
+      }
+
+      // Create empty 1x1 texture for missing maps
+      function createEmptyTexture(device, color = [128, 128, 255, 255]) {
+        const texture = device.createTexture({
+          label: "Empty texture",
+          size: [1, 1, 1],
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+        
+        const placeholderData = new Uint8Array(color);
+        device.queue.writeTexture(
+          { texture: texture },
+          placeholderData,
+          { bytesPerRow: 4 },
+          [1, 1]
+        );
+        
+        return texture;
+      }
+
+      // Create sampler
+      const sampler = device.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+        mipmapFilter: "linear",
+        addressModeU: "repeat",
+        addressModeV: "repeat",
+      });
+
+      // Load textures
+      console.log("Loading textures...");
+      
+      let baseColorTexture, normalTexture, roughnessTexture, metallicTexture, aoTexture, displacementTexture, emissiveTexture;
+      
+      try {
+        // Loading main PBR textures
+        [baseColorTexture, normalTexture, roughnessTexture, metallicTexture] = await Promise.all([
+          loadTexture(device, "Poliigon_BrickWallReclaimed_8320_BaseColor.png"),
+          loadTexture(device, "Poliigon_BrickWallReclaimed_8320_Normal.png"),
+          loadTexture(device, "Poliigon_BrickWallReclaimed_8320_Roughness.png"),
+          loadTexture(device, "Poliigon_BrickWallReclaimed_8320_Metallic.png")
+        ]);
+        
+        // Create empty textures for maps that might not be available
+        aoTexture = createEmptyTexture(device, [255, 255, 255, 255]); // White for no occlusion
+        displacementTexture = createEmptyTexture(device, [0, 0, 0, 255]); // Black for no displacement
+        emissiveTexture = createEmptyTexture(device, [0, 0, 0, 255]); // Black for no emission
+        
+        console.log("All textures loaded successfully");
+      } catch (error) {
+        console.error("Error loading textures:", error);
+        alert("Error loading textures. Check the console for details.");
+      }
+
+      // Create uniform buffer for parameters
+      const uniformBufferSize = 128 * 4; // Make sure it's big enough for all parameters (at least 95 floats)
+      const uniformBuffer = device.createBuffer({
+        label: "Uniform Buffer",
+        size: uniformBufferSize,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+
+      // Create bind group layout
+      const bindGroupLayout = device.createBindGroupLayout({
+        label: "Texture Bind Group Layout",
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            sampler: {}
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            texture: {}
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            texture: {}
+          },
+          {
+            binding: 3,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            texture: {}
+          },
+          {
+            binding: 4,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            texture: {}
+          },
+          {
+            binding: 5,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            texture: {}
+          },
+          {
+            binding: 6,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            texture: {}
+          },
+          {
+            binding: 7,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            texture: {}
+          },
+          {
+            binding: 8,
+            visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+            buffer: { type: "uniform" }
+          }
+        ]
+      });
+
+      // Create pipeline layout
+      const pipelineLayout = device.createPipelineLayout({
+        label: "Pipeline Layout",
+        bindGroupLayouts: [bindGroupLayout],
+      });
+
+      // Create bind group
+      const bindGroup = device.createBindGroup({
+        label: "Texture Bind Group",
+        layout: bindGroupLayout,
+        entries: [
+          {
+            binding: 0,
+            resource: sampler
+          },
+          {
+            binding: 1,
+            resource: baseColorTexture.createView()
+          },
+          {
+            binding: 2,
+            resource: normalTexture.createView()
+          },
+          {
+            binding: 3,
+            resource: roughnessTexture.createView()
+          },
+          {
+            binding: 4,
+            resource: metallicTexture.createView()
+          },
+          {
+            binding: 5,
+            resource: aoTexture.createView()
+          },
+          {
+            binding: 6,
+            resource: displacementTexture.createView()
+          },
+          {
+            binding: 7,
+            resource: emissiveTexture.createView()
+          },
+          {
+            binding: 8,
+            resource: { buffer: uniformBuffer }
+          }
+        ]
+      });
+
+      // Enhanced shader
+      const shaderCode = `
+        struct VertexInput {
+          @location(0) position: vec3f,
+          @location(1) texCoord: vec2f,
+          @location(2) normal: vec3f,
+          @location(3) tangent: vec3f,
+        };
+
+        struct VertexOutput {
+          @builtin(position) position: vec4f,
+          @location(0) texCoord: vec2f,
+          @location(1) tangentLightPos: vec3f,
+          @location(2) tangentViewPos: vec3f,
+          @location(3) tangentFragPos: vec3f,
+          @location(4) worldPos: vec3f,
+        };
+
+        struct Uniforms {
+          viewMatrix: mat4x4f,
+          projMatrix: mat4x4f,
+          modelMatrix: mat4x4f,
+          normalMatrix: mat4x4f,
+          viewPos: vec4f,
+          lightPos: vec4f,
+          lightColor: vec4f,
+          useBaseColorMap: f32,
+          useNormalMap: f32,
+          useRoughnessMap: f32,
+          useMetallicMap: f32,
+          useAOMap: f32,
+          useDisplacementMap: f32,
+          useEmissiveMap: f32,
+          displayMode: f32, // 0 = 2D, 1 = 3D
+          invertColors: f32,
+          useEdgeDetection: f32,
+          edgeDetectionType: f32, // 0 = Sobel, 1 = Scharr
+          blurSharpLevel: f32,
+          opacity: f32,
+          showR: f32,
+          showG: f32,
+          showB: f32,
+          showA: f32,
+          zRange: f32,
+          time: f32,
+        };
+
+        @group(0) @binding(8) var<uniform> uniforms: Uniforms;
+        
+        @group(0) @binding(0) var texSampler: sampler;
+        @group(0) @binding(1) var baseColorMap: texture_2d<f32>;
+        @group(0) @binding(2) var normalMap: texture_2d<f32>;
+        @group(0) @binding(3) var roughnessMap: texture_2d<f32>;
+        @group(0) @binding(4) var metallicMap: texture_2d<f32>;
+        @group(0) @binding(5) var aoMap: texture_2d<f32>;
+        @group(0) @binding(6) var displacementMap: texture_2d<f32>;
+        @group(0) @binding(7) var emissiveMap: texture_2d<f32>;
+
+        // Vertex shader with displacement mapping support
+        @vertex
+        fn vertexMain(input: VertexInput) -> VertexOutput {
+          var output: VertexOutput;
+          
+          // We cannot sample textures in vertex shader in some WebGPU implementations
+          // So for displacement, we'll just use a simpler approach
+          
+          // Calculate world position - no displacement for now
+          let worldPos = (uniforms.modelMatrix * vec4f(input.position, 1.0)).xyz;
+          output.worldPos = worldPos;
+          
+          // Calculate clip space position
+          output.position = uniforms.projMatrix * uniforms.viewMatrix * vec4f(worldPos, 1.0);
+          output.texCoord = input.texCoord;
+          
+          // Calculate TBN matrix for normal mapping
+          let N = normalize((uniforms.normalMatrix * vec4f(input.normal, 0.0)).xyz);
+          let T = normalize((uniforms.normalMatrix * vec4f(input.tangent, 0.0)).xyz);
+          let B = normalize(cross(N, T));
+          let TBN = mat3x3f(T, B, N);
+          
+          // Transform lighting vectors to tangent space
+          output.tangentFragPos = TBN * worldPos;
+          output.tangentLightPos = TBN * uniforms.lightPos.xyz;
+          output.tangentViewPos = TBN * uniforms.viewPos.xyz;
+          
+          return output;
+        }
+
+        // Helper functions for image processing
+        fn applyEdgeDetection(texCoord: vec2f, texSize: vec2f) -> vec3f {
+          let pixelSize = 1.0 / texSize;
+          
+          // Sample neighboring pixels
+          let tl = textureSample(baseColorMap, texSampler, texCoord + vec2f(-pixelSize.x, -pixelSize.y)).rgb;
+          let t  = textureSample(baseColorMap, texSampler, texCoord + vec2f(0.0, -pixelSize.y)).rgb;
+          let tr = textureSample(baseColorMap, texSampler, texCoord + vec2f(pixelSize.x, -pixelSize.y)).rgb;
+          let l  = textureSample(baseColorMap, texSampler, texCoord + vec2f(-pixelSize.x, 0.0)).rgb;
+          let c  = textureSample(baseColorMap, texSampler, texCoord).rgb;
+          let r  = textureSample(baseColorMap, texSampler, texCoord + vec2f(pixelSize.x, 0.0)).rgb;
+          let bl = textureSample(baseColorMap, texSampler, texCoord + vec2f(-pixelSize.x, pixelSize.y)).rgb;
+          let b  = textureSample(baseColorMap, texSampler, texCoord + vec2f(0.0, pixelSize.y)).rgb;
+          let br = textureSample(baseColorMap, texSampler, texCoord + vec2f(pixelSize.x, pixelSize.y)).rgb;
+          
+          var sobelX: vec3f;
+          var sobelY: vec3f;
+          
+          if (uniforms.edgeDetectionType < 0.5) {
+            // Sobel
+            sobelX = tl + 2.0*l + bl - tr - 2.0*r - br;
+            sobelY = tl + 2.0*t + tr - bl - 2.0*b - br;
+          } else {
+            // Scharr
+            sobelX = 3.0*tl + 10.0*l + 3.0*bl - 3.0*tr - 10.0*r - 3.0*br;
+            sobelY = 3.0*tl + 10.0*t + 3.0*tr - 3.0*bl - 10.0*b - 3.0*br;
+          }
+          
+          let edge = sqrt(sobelX.r*sobelX.r + sobelX.g*sobelX.g + sobelX.b*sobelX.b + 
+                          sobelY.r*sobelY.r + sobelY.g*sobelY.g + sobelY.b*sobelY.b);
+          
+          return vec3f(edge, edge, edge);
+        }
+
+        fn applyBlurSharpen(texCoord: vec2f, texSize: vec2f, level: f32) -> vec3f {
+          let pixelSize = 1.0 / texSize;
+          let center = textureSample(baseColorMap, texSampler, texCoord).rgb;
+          
+          if (abs(level) < 0.05) {
+            return center; // No effect near zero
+          }
+          
+          // Sample neighboring pixels
+          let tl = textureSample(baseColorMap, texSampler, texCoord + vec2f(-pixelSize.x, -pixelSize.y)).rgb;
+          let t  = textureSample(baseColorMap, texSampler, texCoord + vec2f(0.0, -pixelSize.y)).rgb;
+          let tr = textureSample(baseColorMap, texSampler, texCoord + vec2f(pixelSize.x, -pixelSize.y)).rgb;
+          let l  = textureSample(baseColorMap, texSampler, texCoord + vec2f(-pixelSize.x, 0.0)).rgb;
+          let r  = textureSample(baseColorMap, texSampler, texCoord + vec2f(pixelSize.x, 0.0)).rgb;
+          let bl = textureSample(baseColorMap, texSampler, texCoord + vec2f(-pixelSize.x, pixelSize.y)).rgb;
+          let b  = textureSample(baseColorMap, texSampler, texCoord + vec2f(0.0, pixelSize.y)).rgb;
+          let br = textureSample(baseColorMap, texSampler, texCoord + vec2f(pixelSize.x, pixelSize.y)).rgb;
+          
+          // Calculate blur (average)
+          let blur = (tl + t + tr + l + center + r + bl + b + br) / 9.0;
+          
+          var result: vec3f;
+          if (level < 0.0) {
+            // Blur
+            let blurAmount = -level;
+            result = center * (1.0 - blurAmount) + blur * blurAmount;
+          } else {
+            // Sharpen
+            // Unsharp mask: center + (center - blur) * amount
+            result = center + (center - blur) * level;
+          }
+          
+          return result;
+        }
+
+        fn applyChannelFilters(color: vec4f) -> vec4f {
+          // Simple version with no ternary operators
+          var r = color.r;
+          var g = color.g;
+          var b = color.b;
+          var a = color.a;
+          
+          // Apply channel filters
+          if (uniforms.showR < 0.5) { r = 0.0; }
+          if (uniforms.showG < 0.5) { g = 0.0; }
+          if (uniforms.showB < 0.5) { b = 0.0; }
+          if (uniforms.showA < 0.5) { a = 1.0; }
+          
+          // Create result vector
+          var result = vec4f(r, g, b, a);
+          
+          // Handle invert colors
+          if (uniforms.invertColors > 0.5) {
+            result = vec4f(1.0 - r, 1.0 - g, 1.0 - b, a);
+          }
+          
+          return result;
+        }
+
+        // Fragment shader with enhanced PBR rendering and image processing
+        @fragment
+        fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+          let texSize = vec2f(textureDimensions(baseColorMap));
+          
+          // For 2D mode, just show the texture with filters
+          if (uniforms.displayMode < 0.5) {
+            var color = textureSample(baseColorMap, texSampler, input.texCoord);
+            
+            // Apply image processing filters
+            if (uniforms.useEdgeDetection > 0.5) {
+              color = vec4f(applyEdgeDetection(input.texCoord, texSize), color.a);
+            }
+            
+            if (abs(uniforms.blurSharpLevel) > 0.05) {
+              color = vec4f(applyBlurSharpen(input.texCoord, texSize, uniforms.blurSharpLevel), color.a);
+            }
+            
+            // Apply channel filters
+            color = applyChannelFilters(color);
+            
+            // Apply opacity
+            color.a = color.a * uniforms.opacity;
+            
+            return color;
+          }
+          
+          // For 3D mode, do full PBR rendering
+          // Sample textures based on enabled maps
+          var baseColor: vec3f;
+          if (uniforms.useBaseColorMap > 0.5) {
+            baseColor = textureSample(baseColorMap, texSampler, input.texCoord).rgb;
+          } else {
+            baseColor = vec3f(0.8, 0.8, 0.8);
+          }
+          
+          // Normal mapping
+          var normal: vec3f;
+          if (uniforms.useNormalMap > 0.5) {
+            normal = textureSample(normalMap, texSampler, input.texCoord).rgb;
+            normal = normalize(normal * 2.0 - 1.0);
+          } else {
+            normal = vec3f(0.0, 0.0, 1.0); // Default normal in tangent space
+          }
+          
+          // PBR parameters
+          var roughness: f32;
+          if (uniforms.useRoughnessMap > 0.5) {
+            roughness = textureSample(roughnessMap, texSampler, input.texCoord).r;
+          } else {
+            roughness = 0.5;
+          }
+          
+          var metallic: f32;
+          if (uniforms.useMetallicMap > 0.5) {
+            metallic = textureSample(metallicMap, texSampler, input.texCoord).r;
+          } else {
+            metallic = 0.0;
+          }
+          
+          var ao: f32;
+          if (uniforms.useAOMap > 0.5) {
+            ao = textureSample(aoMap, texSampler, input.texCoord).r;
+          } else {
+            ao = 1.0;
+          }
+          
+          var emissive: vec3f;
+          if (uniforms.useEmissiveMap > 0.5) {
+            emissive = textureSample(emissiveMap, texSampler, input.texCoord).rgb;
+          } else {
+            emissive = vec3f(0.0);
+          }
+          
+          // Apply visual displacement effect in fragment shader (fake parallax)
+          var texCoord = input.texCoord;
+          if (uniforms.useDisplacementMap > 0.5 && uniforms.displayMode > 0.5) {
+            let viewDir = normalize(input.tangentViewPos - input.tangentFragPos);
+            let height = textureSample(displacementMap, texSampler, texCoord).r;
+            let offset = viewDir.xy * height * uniforms.zRange * 0.1;
+            texCoord = texCoord - offset;
+            
+            // Resample after applying parallax
+            if (uniforms.useBaseColorMap > 0.5) {
+              baseColor = textureSample(baseColorMap, texSampler, texCoord).rgb;
+            }
+            if (uniforms.useNormalMap > 0.5) {
+              normal = textureSample(normalMap, texSampler, texCoord).rgb;
+              normal = normalize(normal * 2.0 - 1.0);
+            }
+            if (uniforms.useRoughnessMap > 0.5) {
+              roughness = textureSample(roughnessMap, texSampler, texCoord).r;
+            }
+            if (uniforms.useMetallicMap > 0.5) {
+              metallic = textureSample(metallicMap, texSampler, texCoord).r;
+            }
+            if (uniforms.useAOMap > 0.5) {
+              ao = textureSample(aoMap, texSampler, texCoord).r;
+            }
+            if (uniforms.useEmissiveMap > 0.5) {
+              emissive = textureSample(emissiveMap, texSampler, texCoord).rgb;
+            }
+          }
+          
+          // Lighting calculation in tangent space
+          let lightColor = uniforms.lightColor.rgb;
+          let lightPower = uniforms.lightColor.a;
+          
+          // Calculate light direction and view direction
+          let lightDir = normalize(input.tangentLightPos - input.tangentFragPos);
+          let viewDir = normalize(input.tangentViewPos - input.tangentFragPos);
+          
+          // Ambient with AO
+          let ambient = 0.1 * baseColor * ao;
+          
+          // Diffuse
+          let diff = max(dot(normal, lightDir), 0.0);
+          let diffuse = diff * baseColor * lightColor * lightPower;
+          
+          // Specular (simplified Blinn-Phong)
+          let halfwayDir = normalize(lightDir + viewDir);
+          let spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0 * (1.0 - roughness));
+          
+          // Calculate specular color based on metallic workflow
+          var specularColor: vec3f;
+          if (metallic > 0.5) {
+            specularColor = baseColor;
+          } else {
+            specularColor = vec3f(0.04);
+          }
+          
+          let specular = lightColor * spec * (1.0 - roughness) * specularColor;
+          
+          // Combine lighting with emissive
+          let result = ambient + diffuse + specular + emissive;
+          
+          // Apply gamma correction
+          let gamma = 2.2;
+          var finalColor: vec3f;
+          finalColor.r = pow(result.r, 1.0/gamma);
+          finalColor.g = pow(result.g, 1.0/gamma);
+          finalColor.b = pow(result.b, 1.0/gamma);
+          
+          // Apply channel and image processing filters
+          var color = applyChannelFilters(vec4f(finalColor, uniforms.opacity));
+          
+          return color;
+        }
+      `;
+
+      const shader = device.createShaderModule({
+        label: "Material Viewer Shader",
+        code: shaderCode
+      });
+
+      // Create vertex buffer layouts for different geometries
+      const vertexBufferLayout = {
+        arrayStride: 11 * 4, // 11 floats * 4 bytes (position[3], texcoord[2], normal[3], tangent[3])
+        attributes: [
+          {
+            // Position
+            format: "float32x3",
+            offset: 0,
+            shaderLocation: 0,
+          },
+          {
+            // TexCoord
+            format: "float32x2",
+            offset: 3 * 4,
+            shaderLocation: 1,
+          },
+          {
+            // Normal
+            format: "float32x3",
+            offset: 5 * 4,
+            shaderLocation: 2,
+          },
+          {
+            // Tangent
+            format: "float32x3",
+            offset: 8 * 4,
+            shaderLocation: 3,
+          }
+        ],
+      };
+
+      // Create the render pipeline
+      const pipeline = device.createRenderPipeline({
+        label: "Material Viewer Pipeline",
+        layout: pipelineLayout,
+        vertex: {
+          module: shader,
+          entryPoint: "vertexMain",
+          buffers: [vertexBufferLayout],
+        },
+        fragment: {
+          module: shader,
+          entryPoint: "fragmentMain",
+          targets: [{
+            format: canvasFormat,
+            blend: {
+              color: {
+                srcFactor: "src-alpha",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+              alpha: {
+                srcFactor: "one",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+            },
+          }],
+        },
+        primitive: {
+          topology: "triangle-list",
+          cullMode: "none",
+        },
+        depthStencil: {
+          depthWriteEnabled: true,
+          depthCompare: "less",
+          format: "depth24plus",
+        },
+      });
+
+      // Create depth texture
+      let depthTexture = device.createTexture({
+        size: [canvas.width, canvas.height],
+        format: "depth24plus",
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+
+      // Function to rebuild depth texture when canvas resizes
+      function updateDepthTexture() {
+        depthTexture.destroy();
+        depthTexture = device.createTexture({
+          size: [canvas.width, canvas.height],
+          format: "depth24plus",
+          usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+      }
+
+      // Update on resize
+      window.addEventListener("resize", updateDepthTexture);
+
+      // Create transformation matrices for 3D rendering
+      function createModelMatrix() {
+        const rotateX = new Float32Array([
+          1, 0, 0, 0,
+          0, Math.cos(appState.rotation.x), Math.sin(appState.rotation.x), 0,
+          0, -Math.sin(appState.rotation.x), Math.cos(appState.rotation.x), 0,
+          0, 0, 0, 1
+        ]);
+
+        const rotateY = new Float32Array([
+          Math.cos(appState.rotation.y), 0, -Math.sin(appState.rotation.y), 0,
+          0, 1, 0, 0,
+          Math.sin(appState.rotation.y), 0, Math.cos(appState.rotation.y), 0,
+          0, 0, 0, 1
+        ]);
+
+        // Combine rotations (simple matrix multiplication)
+        const result = new Float32Array(16);
+        for (let i = 0; i < 4; i++) {
+          for (let j = 0; j < 4; j++) {
+            result[i * 4 + j] = 0;
+            for (let k = 0; k < 4; k++) {
+              result[i * 4 + j] += rotateX[i * 4 + k] * rotateY[k * 4 + j];
+            }
+          }
+        }
+
+        return result;
+      }
+
+      function createViewMatrix() {
+        // Simple lookAt implementation for demo
+        return new Float32Array([
+          1, 0, 0, 0,
+          0, 1, 0, 0,
+          0, 0, 1, 0,
+          0, 0, -3, 1 // Camera at (0, 0, 3) looking at origin
+        ]);
+      }
+
+      function createProjectionMatrix() {
+        // Simple perspective projection
+        const fov = 45 * Math.PI / 180;
+        const aspect = canvas.width / canvas.height;
+        const near = 0.1;
+        const far = 100.0;
+        const f = 1.0 / Math.tan(fov / 2);
+        
+        return new Float32Array([
+          f / aspect, 0, 0, 0,
+          0, f, 0, 0,
+          0, 0, (far + near) / (near - far), -1,
+          0, 0, (2 * far * near) / (near - far), 0
+        ]);
+      }
+
+      // Create model geometry
+      let modelGeometry = getModelGeometry(device);
+      let vertexBuffer = device.createBuffer({
+        label: "Model vertices",
+        size: modelGeometry.vertices.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(vertexBuffer, 0, modelGeometry.vertices);
+
+      let indexBuffer = device.createBuffer({
+        label: "Model indices",
+        size: modelGeometry.indices.byteLength,
+        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(indexBuffer, 0, modelGeometry.indices);
+
+      // Animation state
+      let startTime = performance.now();
+      let lastTime = startTime;
+
+      // Render function
+      function render() {
+        const currentTime = performance.now();
+        const deltaTime = (currentTime - lastTime) * 0.001; // seconds
+        const time = (currentTime - startTime) * 0.001; // seconds
+        lastTime = currentTime;
+
+        // Update model if changed
+        if (appState.modelLastChecked !== appState.model) {
+          appState.modelLastChecked = appState.model;
+          
+          // Get new model geometry and update buffers
+          modelGeometry = getModelGeometry(device);
+          
+          // Update or recreate vertex buffer
+          if (vertexBuffer) vertexBuffer.destroy();
+          vertexBuffer = device.createBuffer({
+            label: "Model vertices",
+            size: modelGeometry.vertices.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+          });
+          device.queue.writeBuffer(vertexBuffer, 0, modelGeometry.vertices);
+          
+          // Update or recreate index buffer
+          if (indexBuffer) indexBuffer.destroy();
+          indexBuffer = device.createBuffer({
+            label: "Model indices",
+            size: modelGeometry.indices.byteLength,
+            usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+          });
+          device.queue.writeBuffer(indexBuffer, 0, modelGeometry.indices);
+        }
+
+        // Auto-rotate if enabled
+        if (appState.autoRotate && appState.mode === "3D") {
+          appState.rotation.y += deltaTime * 0.5;
+        }
+
+        // Create transformation matrices
+        const modelMatrix = createModelMatrix();
+        const viewMatrix = createViewMatrix();
+        const projMatrix = createProjectionMatrix();
+        
+        // Create normal matrix (inverse transpose of model-view matrix)
+        // For this demo, we'll use a simplified version
+        const normalMatrix = new Float32Array([
+          modelMatrix[0], modelMatrix[1], modelMatrix[2], 0,
+          modelMatrix[4], modelMatrix[5], modelMatrix[6], 0,
+          modelMatrix[8], modelMatrix[9], modelMatrix[10], 0,
+          0, 0, 0, 1
+        ]);
+
+        // Update uniform values - using a JS typed array to prepare the data
+        const uniformArray = new Float32Array(95); // Actual number of floats we need
+        let offset = 0;
+        
+        // viewMatrix (16 floats)
+        for (let i = 0; i < 16; i++) uniformArray[offset++] = viewMatrix[i];
+        
+        // projMatrix (16 floats)
+        for (let i = 0; i < 16; i++) uniformArray[offset++] = projMatrix[i];
+        
+        // modelMatrix (16 floats)
+        for (let i = 0; i < 16; i++) uniformArray[offset++] = modelMatrix[i];
+        
+        // normalMatrix (16 floats)
+        for (let i = 0; i < 16; i++) uniformArray[offset++] = normalMatrix[i];
+        
+        // viewPos (vec4)
+        uniformArray[offset++] = 0;
+        uniformArray[offset++] = 0;
+        uniformArray[offset++] = 3;
+        uniformArray[offset++] = 1;
+        
+        // lightPos (vec4)
+        uniformArray[offset++] = appState.lightPos.x;
+        uniformArray[offset++] = appState.lightPos.y;
+        uniformArray[offset++] = appState.lightPos.z;
+        uniformArray[offset++] = 1;
+        
+        // lightColor (vec4, with alpha as intensity)
+        uniformArray[offset++] = 1;
+        uniformArray[offset++] = 1;
+        uniformArray[offset++] = 1;
+        uniformArray[offset++] = appState.lightIntensity;
+        
+        // PBR map flags
+        uniformArray[offset++] = appState.maps.baseColor ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.maps.normal ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.maps.roughness ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.maps.metallic ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.maps.ao ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.maps.displacement ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.maps.emissive ? 1.0 : 0.0;
+        
+        // Display mode (2D/3D)
+        uniformArray[offset++] = appState.mode === "2D" ? 0.0 : 1.0;
+        
+        // Image processing flags
+        uniformArray[offset++] = appState.invertColors ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.edgeDetection ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.edgeDetectionType === "sobel" ? 0.0 : 1.0;
+        uniformArray[offset++] = appState.blurSharpLevel;
+        uniformArray[offset++] = appState.opacity;
+        
+        // Channel visibility
+        uniformArray[offset++] = appState.showChannels.r ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.showChannels.g ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.showChannels.b ? 1.0 : 0.0;
+        uniformArray[offset++] = appState.showChannels.a ? 1.0 : 0.0;
+        
+        // Z range for displacement
+        uniformArray[offset++] = appState.zRange;
+        
+        // Time
+        uniformArray[offset++] = time;
+        
+        // Write to uniform buffer
+        device.queue.writeBuffer(uniformBuffer, 0, uniformArray);
+
+        // Rendering
+        const encoder = device.createCommandEncoder();
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: context.getCurrentTexture().createView(),
+            loadOp: "clear",
+            clearValue: { r: 0.05, g: 0.05, b: 0.05, a: 1.0 },
+            storeOp: "store",
+          }],
+          depthStencilAttachment: {
+            view: depthTexture.createView(),
+            depthClearValue: 1.0,
+            depthLoadOp: "clear",
+            depthStoreOp: "store",
+          }
+        });
+
+        pass.setPipeline(pipeline);
+        pass.setBindGroup(0, bindGroup);
+        pass.setVertexBuffer(0, vertexBuffer);
+        pass.setIndexBuffer(indexBuffer, "uint16");
+        pass.drawIndexed(modelGeometry.indices.length);
+        pass.end();
+
+        device.queue.submit([encoder.finish()]);
+        requestAnimationFrame(render);
+      }
+
+      // Start the render loop
+      requestAnimationFrame(render);
+    </script>
+  </body>
+</html>
