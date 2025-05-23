@@ -1,4 +1,3 @@
-```markdown
 # Surface Texture Dataset Documentation
 
 ## 1. Overview
