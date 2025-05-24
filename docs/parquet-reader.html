@@ -1,0 +1,656 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Parquet-WASM Image Viewer (Improved UI)</title>
+  <style>
+    :root {
+      --primary-color: #007bff;
+      --primary-color-darker: #005a9c;
+      --success-color: #28a745;
+      --error-color: #dc3545;
+      --info-bg-color: #e7f3fe;
+      --success-bg-color: #d4edda;
+      --error-bg-color: #f8d7da;
+      --text-color: #333;
+      --text-muted-color: #6c757d;
+      --border-color: #ddd;
+      --background-color: #f8f9fa;
+      --container-bg-color: #fff;
+      --box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      --border-radius: 0.3rem;
+      --spacing-unit: 1rem;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      max-width: 900px; /* Slightly wider */
+      margin: auto;
+      padding: var(--spacing-unit);
+      background-color: var(--background-color);
+      color: var(--text-color);
+      line-height: 1.6;
+    }
+
+    h1 {
+      color: var(--primary-color-darker);
+      text-align: center;
+      margin-bottom: calc(var(--spacing-unit) * 1.5);
+    }
+
+    p.description {
+      text-align: center;
+      color: var(--text-muted-color);
+      margin-bottom: calc(var(--spacing-unit) * 1.5);
+    }
+
+    .input-group {
+      background-color: var(--container-bg-color);
+      padding: var(--spacing-unit);
+      border-radius: var(--border-radius);
+      box-shadow: var(--box-shadow);
+      margin-bottom: calc(var(--spacing-unit) * 1.5);
+    }
+
+    .input-group > div {
+      margin-bottom: var(--spacing-unit);
+    }
+    .input-group > div:last-child {
+        margin-bottom: 0;
+    }
+
+    .file-input-label, .button {
+      display: inline-block;
+      padding: 0.6rem 1.2rem;
+      background-color: var(--primary-color);
+      color: white;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      transition: background-color 0.2s ease-in-out;
+      font-weight: 500;
+      border: none;
+      text-align: center;
+      text-decoration: none;
+    }
+    .file-input-label:hover, .button:hover {
+      background-color: var(--primary-color-darker);
+    }
+
+    #fileInput {
+      display: none; /* Hidden, label is used */
+    }
+    .file-name-display {
+      display: inline-block;
+      margin-left: 0.75rem;
+      font-style: italic;
+      color: var(--text-muted-color);
+      font-size: 0.9em;
+    }
+
+    .url-input-container {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .url-input-container input[type="text"] {
+      flex-grow: 1;
+      padding: 0.6rem;
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      font-size: 1em;
+    }
+    .url-input-container button {
+        white-space: nowrap;
+    }
+
+
+    #statusContainer {
+      margin-top: var(--spacing-unit);
+      padding: 0.8rem var(--spacing-unit);
+      border: 1px solid transparent;
+      border-radius: var(--border-radius);
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      transition: background-color 0.3s ease, border-color 0.3s ease;
+    }
+    #statusContainer.status-info, #statusContainer.status-loading {
+      background-color: var(--info-bg-color);
+      border-color: var(--primary-color);
+      color: var(--primary-color-darker);
+    }
+    #statusContainer.status-success {
+      background-color: var(--success-bg-color);
+      border-color: var(--success-color);
+      color: #155724;
+    }
+    #statusContainer.status-error {
+      background-color: var(--error-bg-color);
+      border-color: var(--error-color);
+      color: #721c24;
+    }
+
+    /* Icons using pseudo-elements (simple example) */
+    #statusContainer::before {
+      margin-right: 0.75rem;
+      font-weight: bold; /* Make symbol thicker */
+      font-size: 1.2em; /* Slightly larger symbol */
+    }
+    #statusContainer.status-success::before { content: "✔"; color: var(--success-color); }
+    #statusContainer.status-error::before { content: "✖"; color: var(--error-color); }
+    #statusContainer.status-info::before { content: "ℹ"; color: var(--primary-color-darker); }
+    /* Loader will be prepended in JS, so no ::before for status-loading if loader div is used */
+
+
+    #metadataContainer {
+      background-color: var(--container-bg-color);
+      padding: var(--spacing-unit);
+      border-radius: var(--border-radius);
+      box-shadow: var(--box-shadow);
+      margin-top: calc(var(--spacing-unit) * 1.5);
+      margin-bottom: calc(var(--spacing-unit) * 1.5);
+      border: 1px solid var(--border-color);
+    }
+    #metadataContainer h2 {
+      margin-top: 0;
+      color: var(--primary-color-darker);
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 0.5rem;
+      margin-bottom: 1rem;
+    }
+    #metadataContainer:empty {
+      display: none; /* Hide if no metadata */
+    }
+
+    #metadataContainer table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+    }
+    #metadataContainer th, #metadataContainer td {
+        border: 1px solid var(--border-color);
+        padding: 0.5rem 0.75rem;
+        text-align: left;
+    }
+    #metadataContainer th {
+        background-color: var(--background-color);
+        font-weight: 600;
+        color: var(--primary-color-darker);
+    }
+    #metadataContainer tbody tr:nth-child(odd) {
+        background-color: var(--background-color);
+    }
+    #metadataContainer tbody tr:hover {
+        background-color: #f0f8ff; /* Light blue on hover */
+    }
+
+
+    #imageContainer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--spacing-unit);
+      margin-top: var(--spacing-unit);
+      padding: var(--spacing-unit);
+      background-color: var(--container-bg-color);
+      border: 1px solid var(--border-color);
+      border-radius: var(--border-radius);
+      min-height: 150px;
+      box-shadow: var(--box-shadow);
+    }
+    #imageContainer:empty::before {
+      content: "No images to display. Select a Parquet file to begin.";
+      width: 100%;
+      text-align: center;
+      color: var(--text-muted-color);
+      font-style: italic;
+      align-self: center; /* Center vertically in flex container */
+    }
+
+    .image-card {
+        max-width: 200px;
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding-bottom: 0.5rem; /* Space below title */
+    }
+
+    .image-card img {
+      max-width: 100%; /* Constrain image to card width */
+      height: 150px; /* Fixed height for consistent display */
+      object-fit: contain; /* Ensure entire image is visible, no cropping */
+      display: block;
+      transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+      border-bottom: 1px solid var(--border-color); /* Separator */
+      margin-bottom: 0.5rem;
+    }
+    .image-card img:hover {
+      transform: scale(1.02); /* Slight zoom on hover */
+      box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    .image-card .image-title {
+        font-size: 0.9em;
+        color: var(--text-color);
+        text-align: center;
+        padding: 0 0.5rem;
+        word-break: break-word;
+        max-height: 3em; /* Limit title height */
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .image-load-error {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 200px; /* Match card width */
+      height: 200px; /* Match card height */
+      background-color: #f8f9fa;
+      color: var(--error-color);
+      font-size: 0.85em;
+      text-align: center;
+      padding: 0.5rem;
+      border-color: var(--error-color);
+      font-weight: 500;
+      border-radius: var(--border-radius); /* Inherit from card if part of it */
+    }
+    .image-load-error::before { /* Error icon for image */
+        content: "⚠";
+        font-size: 2em;
+        display: block;
+        margin-bottom: 0.25rem;
+    }
+
+
+    /* CSS Loader */
+    .loader {
+      border: 4px solid #f3f3f3; /* Light grey */
+      border-top: 4px solid var(--primary-color); /* Blue from variable */
+      border-radius: 50%;
+      width: 20px; /* Adjusted size */
+      height: 20px; /* Adjusted size */
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+      margin-right: 0.75rem; /* Spacing from text */
+      vertical-align: middle; /* Align with text */
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <h1>Parquet-WASM Image Viewer</h1>
+  <p class="description">
+    Select a local <code>.parquet</code> file or provide a URL. The viewer expects an
+    <code>image_data</code> column containing Base64 encoded PNGs or raw PNG binary data.
+  </p>
+
+  <div class="input-group">
+    <div>
+      <label for="fileInput" class="file-input-label">Choose Local Parquet File</label>
+      <input type="file" id="fileInput" accept=".parquet">
+      <span id="fileNameDisplay" class="file-name-display">No file selected.</span>
+    </div>
+    <div class="url-input-container">
+      <input type="text" id="parquetUrlInput" placeholder="Enter Parquet file URL (e.g., https://example.com/data.parquet)">
+      <button id="loadUrlButton" class="button">Load from URL</button>
+    </div>
+  </div>
+
+  <div id="statusContainer"></div>
+
+  <div id="metadataContainer">
+    <h2>Parquet File Metadata (Schema)</h2>
+    <div id="schemaDisplay"></div> </div>
+
+  <div id="imageContainer"></div>
+
+  <script type="module">
+    import initWasm, { readParquet } from './package/esm/parquet_wasm.js';
+    import { tableFromIPC } from 'https://cdn.jsdelivr.net/npm/apache-arrow@20.0.0/+esm';
+
+    const fileInputElement = document.getElementById('fileInput');
+    const parquetUrlInput = document.getElementById('parquetUrlInput');
+    const loadUrlButton = document.getElementById('loadUrlButton');
+    const statusElement = document.getElementById('statusContainer');
+    const imagesElement = document.getElementById('imageContainer');
+    const fileNameDisplayElement = document.getElementById('fileNameDisplay');
+    const metadataContainer = document.getElementById('metadataContainer');
+    const schemaDisplayElement = document.getElementById('schemaDisplay'); // This will now hold the table HTML
+
+    let wasmModuleInitialized = false;
+
+    function showLoader(message) {
+      statusElement.innerHTML = `<div class="loader"></div><span>${message}</span>`;
+      statusElement.className = 'status-loading';
+    }
+
+    function setStatusMessage(message, type = 'info') {
+      statusElement.innerHTML = `<span>${message}</span>`;
+      statusElement.className = '';
+      statusElement.classList.add(`status-${type}`);
+    }
+
+    function clearDisplays() {
+        imagesElement.innerHTML = '';
+        schemaDisplayElement.innerHTML = ''; // Clear inner HTML for the table
+        metadataContainer.style.display = 'none'; // Hide metadata container
+        setStatusMessage('Ready to select a .parquet file.', 'info');
+    }
+
+    async function initializeWasmOnce() {
+      if (!wasmModuleInitialized) {
+        showLoader('Loading WebAssembly module…');
+        try {
+          await initWasm('./package/esm/parquet_wasm_bg.wasm');
+          wasmModuleInitialized = true;
+          console.log('WebAssembly module initialized.');
+          setStatusMessage('WebAssembly module loaded. Ready to select a .parquet file or load from URL.', 'info');
+        } catch (err) {
+            console.error('Failed to initialize WebAssembly:', err);
+            setStatusMessage('Error: Could not initialize WebAssembly. ' + (err.message || String(err)) + '. Check console for details.', 'error');
+            throw err;
+        }
+      }
+    }
+
+    function robustUint8ArrayToBase64(u8Array) {
+      const CHUNK_SIZE = 0x8000; // 32KB
+      let binaryString = "";
+      for (let i = 0; i < u8Array.length; i += CHUNK_SIZE) {
+        binaryString += String.fromCharCode.apply(null, u8Array.subarray(i, i + CHUNK_SIZE));
+      }
+      try {
+        return btoa(binaryString);
+      } catch (e) {
+        console.error("Base64 encoding error (btoa):", e);
+        return null;
+      }
+    }
+
+    // Function to render schema as an HTML table
+    function renderSchemaTable(schemaFields, numRows, numColumns) {
+        let tableHtml = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>Property</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>Rows</td><td>${numRows}</td></tr>
+                    <tr><td>Columns</td><td>${numColumns}</td></tr>
+                </tbody>
+            </table>
+            <h3>Column Details:</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Nullable</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+        schemaFields.forEach(field => {
+            tableHtml += `
+                <tr>
+                    <td>${field.name}</td>
+                    <td>${field.type}</td>
+                    <td>${field.nullable ? 'Yes' : 'No'}</td>
+                </tr>
+            `;
+        });
+        tableHtml += `
+                </tbody>
+            </table>
+        `;
+        schemaDisplayElement.innerHTML = tableHtml;
+        metadataContainer.style.display = 'block';
+    }
+
+
+    async function processParquetFile(fileBuffer, sourceName = 'Selected File') {
+      imagesElement.innerHTML = '';
+      schemaDisplayElement.innerHTML = ''; // Clear inner HTML for the table
+      metadataContainer.style.display = 'none';
+      let displayedImageCount = 0;
+
+      try {
+        await initializeWasmOnce();
+
+        showLoader(`Parsing ${sourceName} (WASM)…`);
+        const wasmSideTable = readParquet(fileBuffer);
+
+        showLoader(`Converting to Arrow IPC Stream (WASM)…`);
+        const ipcStreamBytes = wasmSideTable.intoIPCStream();
+
+        showLoader(`Decoding Arrow IPC Stream (JavaScript) and extracting metadata…`);
+        const arrowJsTable = tableFromIPC(ipcStreamBytes);
+
+        // Display Schema/Metadata as a table
+        if (arrowJsTable.schema) {
+            const schemaFields = arrowJsTable.schema.fields.map(field => ({
+                name: field.name,
+                type: field.type.toString(),
+                nullable: field.nullable,
+            }));
+            renderSchemaTable(schemaFields, arrowJsTable.numRows, arrowJsTable.numCols);
+        } else {
+            console.warn("Could not retrieve schema from Arrow Table.");
+            schemaDisplayElement.innerHTML = "<p>Schema information not available.</p>";
+            metadataContainer.style.display = 'block';
+        }
+
+
+        if (arrowJsTable.numRows === 0) {
+          setStatusMessage(`No data rows found in ${sourceName}.`, 'info');
+          return;
+        }
+
+        // Check for 'image_data' column
+        if (!arrowJsTable.schema.fields.some(field => field.name === 'image_data')) {
+            setStatusMessage(`Error: "${sourceName}" does not contain an 'image_data' column. Please ensure the Parquet file has an 'image_data' column with PNG data.`, 'error');
+            return;
+        }
+
+        showLoader(`Processing ${arrowJsTable.numRows} image(s) from ${sourceName}…`);
+
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        let processedRowCount = 0;
+        for (const row of arrowJsTable) {
+          processedRowCount++;
+          if (processedRowCount % 10 === 0 || processedRowCount === arrowJsTable.numRows) {
+               showLoader(`Processing image ${processedRowCount} of ${arrowJsTable.numRows} from ${sourceName}...`);
+               await new Promise(resolve => setTimeout(resolve, 0));
+          }
+
+          const imageDataColumn = row.image_data;
+          // Prioritize 'map_type' for the image title, then 'title', 'name', 'id'
+          const imageTitleColumn = row.map_type || row.title || row.name || row.id || `Image ${processedRowCount}`;
+
+          if (imageDataColumn === null || imageDataColumn === undefined) {
+            console.warn(`Row ${processedRowCount - 1}: 'image_data' is null or undefined. Skipping.`);
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'image-card';
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'image-load-error';
+            errorDiv.textContent = `Missing Data: ${String(imageTitleColumn)}`;
+            cardDiv.appendChild(errorDiv);
+            imagesElement.appendChild(cardDiv);
+            continue;
+          }
+
+          let base64EncodedPng;
+          try {
+            if (typeof imageDataColumn === 'string') {
+              base64EncodedPng = imageDataColumn;
+            } else if (imageDataColumn instanceof Uint8Array) {
+              base64EncodedPng = robustUint8ArrayToBase64(imageDataColumn);
+            } else {
+              console.warn(`Row ${processedRowCount - 1}: 'image_data' is of unsupported type '${typeof imageDataColumn}'. Expected string or Uint8Array. Skipping.`);
+              const cardDiv = document.createElement('div');
+              cardDiv.className = 'image-card';
+              const errorDiv = document.createElement('div');
+              errorDiv.className = 'image-load-error';
+              errorDiv.textContent = `Unsupported Type: ${String(imageTitleColumn)}`;
+              cardDiv.appendChild(errorDiv);
+              imagesElement.appendChild(cardDiv);
+              continue;
+            }
+          } catch (b64Error) {
+            console.error(`Error Base64 encoding image data for row ${processedRowCount - 1}:`, b64Error);
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'image-card';
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'image-load-error';
+            errorDiv.textContent = `Encoding Error: ${String(imageTitleColumn)}`;
+            cardDiv.appendChild(errorDiv);
+            imagesElement.appendChild(cardDiv);
+            continue;
+          }
+
+          if (!base64EncodedPng) {
+            console.warn(`Row ${processedRowCount - 1}: Failed to obtain Base64 data. Skipping.`);
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'image-card';
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'image-load-error';
+            errorDiv.textContent = `Empty Data: ${String(imageTitleColumn)}`;
+            cardDiv.appendChild(errorDiv);
+            imagesElement.appendChild(cardDiv);
+            continue;
+          }
+
+          const cardDiv = document.createElement('div');
+          cardDiv.className = 'image-card';
+
+          const imgElement = new Image();
+          imgElement.src = 'data:image/png;base64,' + base64EncodedPng;
+          imgElement.alt = String(imageTitleColumn);
+
+          const titleElement = document.createElement('div');
+          titleElement.className = 'image-title';
+          titleElement.textContent = String(imageTitleColumn);
+
+
+          imgElement.onerror = () => {
+            console.error(`Failed to load image from Base64 data for row ${processedRowCount - 1} (Title: ${String(imageTitleColumn)}). This might indicate corrupted PNG data or incorrect Base64 encoding.`);
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'image-load-error';
+            errorDiv.textContent = `Load Error: ${String(imageTitleColumn)}`;
+            cardDiv.innerHTML = '';
+            cardDiv.appendChild(errorDiv);
+          };
+
+          cardDiv.appendChild(imgElement);
+          cardDiv.appendChild(titleElement);
+          imagesElement.appendChild(cardDiv);
+          displayedImageCount++;
+        }
+
+        if (displayedImageCount > 0) {
+          setStatusMessage(`Successfully displayed ${displayedImageCount} image${displayedImageCount !== 1 ? 's' : ''} from ${sourceName}.`, 'success');
+        } else if (arrowJsTable.numRows > 0) {
+          setStatusMessage(`Processed ${sourceName}, but no valid images could be displayed. Check 'image_data' column's content.`, 'info');
+        } else {
+             setStatusMessage(`No images or data rows found in ${sourceName}.`, 'info');
+        }
+
+      } catch (err) {
+        console.error('An unexpected error occurred during Parquet processing:', err);
+        setStatusMessage('Error: ' + (err.message || String(err)) + '. Check console for details.', 'error');
+        fileNameDisplayElement.textContent = 'No file selected.';
+        fileInputElement.value = '';
+      }
+    }
+
+    fileInputElement.addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+
+      clearDisplays();
+
+      if (!file) {
+        fileNameDisplayElement.textContent = 'No file selected.';
+        return;
+      }
+
+      fileNameDisplayElement.textContent = file.name;
+      parquetUrlInput.value = '';
+
+      if (!file.name.toLowerCase().endsWith('.parquet')) {
+        setStatusMessage('Error: Please select a .parquet file.', 'error');
+        fileInputElement.value = '';
+        fileNameDisplayElement.textContent = 'No file selected.';
+        return;
+      }
+
+      showLoader('Reading file into memory…');
+      try {
+        const fileBuffer = new Uint8Array(await file.arrayBuffer());
+        await processParquetFile(fileBuffer, file.name);
+      } catch (err) {
+        console.error('Error reading local file:', err);
+        setStatusMessage(`Error reading local file: ${err.message || String(err)}`, 'error');
+        fileNameDisplayElement.textContent = 'No file selected.';
+        fileInputElement.value = '';
+      }
+    });
+
+    loadUrlButton.addEventListener('click', async () => {
+        const url = parquetUrlInput.value.trim();
+        clearDisplays();
+        fileNameDisplayElement.textContent = 'No file selected.';
+
+        if (!url) {
+            setStatusMessage('Please enter a URL for the Parquet file.', 'info');
+            return;
+        }
+
+        if (!url.toLowerCase().endsWith('.parquet')) {
+            setStatusMessage('Info: The URL does not end with ".parquet". Proceeding anyway, but file might not be a valid Parquet.', 'info');
+        }
+
+        showLoader(`Workspaceing Parquet file from URL: ${url}…`);
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status} - ${response.statusText || 'Unknown Error'}`);
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            const fileBuffer = new Uint8Array(arrayBuffer);
+            await processParquetFile(fileBuffer, `URL: ${url}`);
+        } catch (err) {
+            console.error('Error fetching file from URL:', err);
+            let errorMessage = `Error fetching from URL: ${err.message || String(err)}.`;
+            if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
+                errorMessage += ' This might be a CORS issue or the URL is incorrect/unavailable. Check your browser\'s developer console for more details.';
+            }
+            setStatusMessage(errorMessage, 'error');
+        }
+    });
+
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      try {
+        await initializeWasmOnce();
+        if (wasmModuleInitialized && !statusElement.classList.contains('status-error')) {
+            setStatusMessage('Ready to select a .parquet file or load from URL.', 'info');
+        }
+      } catch (err) {
+      }
+    });
+
+  </script>
+</body>
+</html>
