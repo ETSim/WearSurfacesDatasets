@@ -239,6 +239,12 @@
         border: 1px solid rgba(255, 107, 107, 0.4);
       }
 
+      .status-message.info {
+        background: rgba(0, 123, 255, 0.2);
+        color: #007bff;
+        border: 1px solid rgba(0, 123, 255, 0.4);
+      }
+
       .range-value {
         display: inline-block;
         min-width: 50px;
@@ -299,6 +305,14 @@
             🖼️ Load Individual Textures
           </label>
         </div>
+
+        <div class="file-input-container">
+          <input type="file" id="parquetTextureFile" class="file-input" accept=".parquet">
+          <label for="parquetTextureFile" class="file-input-label" style="background: linear-gradient(135deg, #007bff 0%, #005a9c 100%); box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);">
+            📦 Load Parquet Texture
+          </label>
+        </div>
+        <div id="parquetStatusMessage" class="status-message"></div>
 
         <div id="loadingIndicator" class="loading-indicator">
           <div>Loading textures...</div>
@@ -385,9 +399,7 @@
             <option value="plane">Plane</option>
             <option value="cube">Cube</option>
             <option value="sphere">Sphere</option>
-            <option value="cylinder">Cylinder</option>
-            <option value="teapot">Teapot</option>
-          </select>
+            </select>
         </label>
         
         <div class="shading-model-selector">
@@ -454,6 +466,11 @@
     </div>
 
     <script type="module">
+      // Import necessary WebAssembly and Apache Arrow modules
+      // Ensure 'package/esm/parquet_wasm.js' is accessible relative to this HTML file.
+      import initWasm, { readParquet } from './package/esm/parquet_wasm.js'; 
+      import { tableFromIPC } from 'https://cdn.jsdelivr.net/npm/apache-arrow@20.0.0/+esm';
+
       class MaterialViewer {
         constructor() {
           this.canvas = document.querySelector("canvas");
@@ -804,7 +821,7 @@
               let lightColor = uniforms.lightColor.rgb;
               let lightPower = uniforms.lightColor.a;
 
-              var N = normalize(input.worldNormal);
+              var N = normalize(input.worldNormal); // Changed 'let' to 'var' here
               let V = normalize(uniforms.viewPos.xyz - input.worldPos);
               let L = normalize(uniforms.lightPos.xyz - input.worldPos);
               let H = normalize(V + L);
@@ -892,12 +909,12 @@
           });
 
           const vertexBufferLayout = {
-            arrayStride: 11 * 4,
+            arrayStride: 11 * 4, // 3 (pos) + 2 (texCoord) + 3 (normal) + 3 (tangent) = 11 floats * 4 bytes/float
             attributes: [
-              { format: "float32x3", offset: 0, shaderLocation: 0 },
-              { format: "float32x2", offset: 3 * 4, shaderLocation: 1 },
-              { format: "float32x3", offset: 5 * 4, shaderLocation: 2 },
-              { format: "float32x3", offset: 8 * 4, shaderLocation: 3 }
+              { format: "float32x3", offset: 0, shaderLocation: 0 }, // Position
+              { format: "float32x2", offset: 3 * 4, shaderLocation: 1 }, // TexCoord
+              { format: "float32x3", offset: 5 * 4, shaderLocation: 2 }, // Normal
+              { format: "float32x3", offset: 8 * 4, shaderLocation: 3 }  // Tangent
             ],
           };
 
@@ -1034,6 +1051,7 @@
         }
 
         createPlaneGeometry() {
+          // Vertices: position (3), texCoord (2), normal (3), tangent (3) = 11 floats per vertex
           const vertices = new Float32Array([
             -1.0, -1.0, 0.0,  0.0, 1.0,  0.0, 0.0, 1.0,  1.0, 0.0, 0.0,
              1.0, -1.0, 0.0,  1.0, 1.0,  0.0, 0.0, 1.0,  1.0, 0.0, 0.0,
@@ -1046,50 +1064,80 @@
         }
 
         createCubeGeometry() {
-          const s = 0.5;
-          const vertices = new Float32Array([
-            // Front face
-            -s, -s,  s,  0.0, 1.0,  0.0, 0.0, 1.0,  1.0, 0.0, 0.0,
-             s, -s,  s,  1.0, 1.0,  0.0, 0.0, 1.0,  1.0, 0.0, 0.0,
-             s,  s,  s,  1.0, 0.0,  0.0, 0.0, 1.0,  1.0, 0.0, 0.0,
-            -s,  s,  s,  0.0, 0.0,  0.0, 0.0, 1.0,  1.0, 0.0, 0.0,
-            // Back face
-            -s, -s, -s,  1.0, 1.0,  0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
-             s, -s, -s,  0.0, 1.0,  0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
-             s,  s, -s,  0.0, 0.0,  0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
-            -s,  s, -s,  1.0, 0.0,  0.0, 0.0, -1.0, -1.0, 0.0, 0.0,
-            // Top face
-            -s,  s, -s,  0.0, 1.0,  0.0, 1.0, 0.0,  1.0, 0.0, 0.0,
-             s,  s, -s,  1.0, 1.0,  0.0, 1.0, 0.0,  1.0, 0.0, 0.0,
-             s,  s,  s,  1.0, 0.0,  0.0, 1.0, 0.0,  1.0, 0.0, 0.0,
-            -s,  s,  s,  0.0, 0.0,  0.0, 1.0, 0.0,  1.0, 0.0, 0.0,
-            // Bottom face
-            -s, -s, -s,  0.0, 0.0,  0.0, -1.0, 0.0, 1.0, 0.0, 0.0,
-             s, -s, -s,  1.0, 0.0,  0.0, -1.0, 0.0, 1.0, 0.0, 0.0,
-             s, -s,  s,  1.0, 1.0,  0.0, -1.0, 0.0, 1.0, 0.0, 0.0,
-            -s, -s,  s,  0.0, 1.0,  0.0, -1.0, 0.0, 1.0, 0.0, 0.0,
-            // Right face
-             s, -s, -s,  0.0, 1.0,  1.0, 0.0, 0.0,  0.0, 0.0, -1.0,
-             s,  s, -s,  0.0, 0.0,  1.0, 0.0, 0.0,  0.0, 0.0, -1.0,
-             s,  s,  s,  1.0, 0.0,  1.0, 0.0, 0.0,  0.0, 0.0, -1.0,
-             s, -s,  s,  1.0, 1.0,  1.0, 0.0, 0.0,  0.0, 0.0, -1.0,
-            // Left face
-            -s, -s, -s,  1.0, 1.0,  -1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-            -s,  s, -s,  1.0, 0.0,  -1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-            -s,  s,  s,  0.0, 0.0,  -1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-            -s, -s,  s,  0.0, 1.0,  -1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-          ]);
+            const s = 0.5; // Half-side length
+            const positions = [];
+            const texCoords = [];
+            const normals = [];
+            const tangents = [];
+            const indices = [];
 
-          const indices = new Uint16Array([
-            0, 1, 2,  2, 3, 0,    // Front
-            4, 5, 6,  6, 7, 4,    // Back
-            8, 9, 10, 10, 11, 8,  // Top
-            12, 13, 14, 14, 15, 12, // Bottom
-            16, 17, 18, 18, 19, 16, // Right
-            20, 21, 22, 22, 23, 20  // Left
-          ]);
+            // Define vertices for each face explicitly to handle normals and tangents correctly
+            // Front face (Z+)
+            // pos, texCoord, normal, tangent
+            positions.push(-s, -s, s,  s, -s, s,  s, s, s,  -s, s, s);
+            texCoords.push(0.0, 1.0,  1.0, 1.0,  1.0, 0.0,  0.0, 0.0);
+            normals.push(0.0, 0.0, 1.0,  0.0, 0.0, 1.0,  0.0, 0.0, 1.0,  0.0, 0.0, 1.0);
+            tangents.push(1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0);
+            indices.push(0, 1, 2,  2, 3, 0);
 
-          return { vertices, indices, topology: "triangle-list" };
+            // Back face (Z-)
+            // pos, texCoord, normal, tangent
+            positions.push(-s, -s, -s,  -s, s, -s,  s, s, -s,  s, -s, -s);
+            texCoords.push(1.0, 1.0,  1.0, 0.0,  0.0, 0.0,  0.0, 1.0);
+            normals.push(0.0, 0.0, -1.0,  0.0, 0.0, -1.0,  0.0, 0.0, -1.0,  0.0, 0.0, -1.0);
+            tangents.push(-1.0, 0.0, 0.0,  -1.0, 0.0, 0.0,  -1.0, 0.0, 0.0,  -1.0, 0.0, 0.0);
+            indices.push(4, 5, 6,  6, 7, 4);
+
+            // Top face (Y+)
+            // pos, texCoord, normal, tangent
+            positions.push(-s, s, -s,  -s, s, s,  s, s, s,  s, s, -s);
+            texCoords.push(0.0, 1.0,  0.0, 0.0,  1.0, 0.0,  1.0, 1.0);
+            normals.push(0.0, 1.0, 0.0,  0.0, 1.0, 0.0,  0.0, 1.0, 0.0,  0.0, 1.0, 0.0);
+            tangents.push(1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0);
+            indices.push(8, 9, 10,  10, 11, 8);
+
+            // Bottom face (Y-)
+            // pos, texCoord, normal, tangent
+            positions.push(-s, -s, -s,  s, -s, -s,  s, -s, s,  -s, -s, s);
+            texCoords.push(0.0, 0.0,  1.0, 0.0,  1.0, 1.0,  0.0, 1.0);
+            normals.push(0.0, -1.0, 0.0,  0.0, -1.0, 0.0,  0.0, -1.0, 0.0,  0.0, -1.0, 0.0);
+            tangents.push(1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0);
+            indices.push(12, 13, 14,  14, 15, 12);
+
+            // Right face (X+)
+            // pos, texCoord, normal, tangent
+            positions.push(s, -s, -s,  s, s, -s,  s, s, s,  s, -s, s);
+            texCoords.push(0.0, 1.0,  0.0, 0.0,  1.0, 0.0,  1.0, 1.0);
+            normals.push(1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0,  1.0, 0.0, 0.0);
+            tangents.push(0.0, 0.0, -1.0,  0.0, 0.0, -1.0,  0.0, 0.0, -1.0,  0.0, 0.0, -1.0);
+            indices.push(16, 17, 18,  18, 19, 16);
+
+            // Left face (X-)
+            // pos, texCoord, normal, tangent
+            positions.push(-s, -s, -s,  -s, -s, s,  -s, s, s,  -s, s, -s);
+            texCoords.push(1.0, 1.0,  0.0, 1.0,  0.0, 0.0,  1.0, 0.0);
+            normals.push(-1.0, 0.0, 0.0,  -1.0, 0.0, 0.0,  -1.0, 0.0, 0.0,  -1.0, 0.0, 0.0);
+            tangents.push(0.0, 0.0, 1.0,  0.0, 0.0, 1.0,  0.0, 0.0, 1.0,  0.0, 0.0, 1.0);
+            indices.push(20, 21, 22,  22, 23, 20);
+
+            // Interleave all vertex data
+            const interleavedVertices = new Float32Array(positions.length + texCoords.length + normals.length + tangents.length);
+            let vertexIndex = 0;
+            for (let i = 0; i < positions.length / 3; i++) {
+                interleavedVertices[vertexIndex++] = positions[i * 3];
+                interleavedVertices[vertexIndex++] = positions[i * 3 + 1];
+                interleavedVertices[vertexIndex++] = positions[i * 3 + 2];
+                interleavedVertices[vertexIndex++] = texCoords[i * 2];
+                interleavedVertices[vertexIndex++] = texCoords[i * 2 + 1];
+                interleavedVertices[vertexIndex++] = normals[i * 3];
+                interleavedVertices[vertexIndex++] = normals[i * 3 + 1];
+                interleavedVertices[vertexIndex++] = normals[i * 3 + 2];
+                interleavedVertices[vertexIndex++] = tangents[i * 3];
+                interleavedVertices[vertexIndex++] = tangents[i * 3 + 1];
+                interleavedVertices[vertexIndex++] = tangents[i * 3 + 2];
+            }
+
+            return { vertices: interleavedVertices, indices: new Uint16Array(indices), topology: "triangle-list" };
         }
 
         createSphereGeometry() {
@@ -1160,19 +1208,21 @@
         }
 
         createCylinderGeometry() {
-          return this.createCubeGeometry();
+          console.warn("Cylinder model is no longer supported. Falling back to Plane geometry.");
+          return this.createPlaneGeometry();
         }
 
         createTeapotGeometry() {
-          return this.createSphereGeometry();
+          console.warn("Teapot model is no longer supported. Falling back to Plane geometry.");
+          return this.createPlaneGeometry();
         }
 
         getModelGeometry() {
           switch (this.state.model) {
             case "cube": return this.createCubeGeometry();
             case "sphere": return this.createSphereGeometry();
-            case "cylinder": return this.createCylinderGeometry();
-            case "teapot": return this.createTeapotGeometry();
+            case "cylinder": return this.createCylinderGeometry(); // Will now return plane and warn
+            case "teapot": return this.createTeapotGeometry();     // Will now return plane and warn
             default: return this.createPlaneGeometry();
           }
         }
@@ -1249,6 +1299,10 @@
           ]);
         }
 
+        /**
+         * Loads textures from a folder or individual files.
+         * @param {File[]} files - An array of File objects.
+         */
         async loadTextureFolder(files) {
           this.showLoading(true);
           this.showStatus("Loading new material...", "info");
@@ -1260,6 +1314,7 @@
               this.currentMaterialName = baseName || "Custom Material";
             }
 
+            // Reset texture status for all maps
             Object.keys(this.textureStatus).forEach(key => {
               this.textureStatus[key] = false;
             });
@@ -1274,16 +1329,18 @@
                   this.textureStatus[type] = true;
                 } catch (error) {
                   console.error(`Failed to load ${type} texture:`, error);
-                  this.textures[type] = this.createEmptyTexture([255, 0, 255, 255]);
+                  // Fallback to an empty texture with a distinct color for missing textures
+                  this.textures[type] = this.createEmptyTexture([255, 0, 255, 255]); // Magenta for error
                   this.textureStatus[type] = false;
                 }
               } else {
+                // Load default empty texture if no file is provided for a type
                 const defaultColors = {
                   baseColor: [128, 128, 128, 255],
-                  normal: [128, 128, 255, 255],
+                  normal: [128, 128, 255, 255], // Blueish for normal map
                   roughness: [128, 128, 128, 255],
                   metallic: [0, 0, 0, 255],
-                  ao: [255, 255, 255, 255],
+                  ao: [255, 255, 255, 255], // White for AO
                   displacement: [128, 128, 128, 255],
                   emissive: [0, 0, 0, 255],
                   curvature: [128, 128, 128, 255],
@@ -1308,8 +1365,13 @@
           }
         }
 
+        /**
+         * Extracts a base name from a filename by removing common PBR map suffixes.
+         * @param {string} filename - The original filename.
+         * @returns {string} The extracted base name.
+         */
         extractBaseName(filename) {
-          const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
+          const nameWithoutExt = filename.replace(/\.[^/.]+$/, ""); // Remove extension
 
           const patterns = [
             /_BaseColor$/i, /_Albedo$/i, /_Diffuse$/i,
@@ -1333,6 +1395,11 @@
           return baseName;
         }
 
+        /**
+         * Maps an array of File objects to their corresponding texture types based on filename.
+         * @param {File[]} files - An array of File objects.
+         * @returns {Object.<string, File|null>} An object mapping texture types to File objects.
+         */
         mapFilesToTextureTypes(files) {
           const textureMap = {
             baseColor: null, normal: null, roughness: null, metallic: null,
@@ -1353,7 +1420,7 @@
             } else if (filename.includes('ao') || filename.includes('occlusion')) {
               textureMap.ao = file;
             } else if (filename.includes('displacement') || filename.includes('height')) {
-              if (!textureMap.displacement) {
+              if (!textureMap.displacement) { // Prioritize the first one found if multiple matches
                 textureMap.displacement = file;
               }
             } else if (filename.includes('emissive') || filename.includes('emission')) {
@@ -1368,6 +1435,12 @@
           return textureMap;
         }
 
+        /**
+         * Loads a WebGPU texture from a File object.
+         * @param {File} file - The File object to load.
+         * @param {string} type - The type of texture (e.g., 'baseColor').
+         * @returns {Promise<GPUTexture>} A promise that resolves with the loaded GPUTexture.
+         */
         async loadTextureFromFile(file, type) {
           return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -1379,7 +1452,7 @@
 
                   const texture = this.device.createTexture({
                     label: `${type}: ${file.name}`,
-                    size: [imageBitmap.width, imageBitmap.height, 1],
+                    size: [imageBitmap.width, imageBitmap.width, 1], // Use width for height to ensure square if needed, or imageBitmap.height
                     format: "rgba8unorm",
                     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
                   });
@@ -1403,32 +1476,98 @@
           });
         }
 
+        /**
+         * Loads a WebGPU texture from raw image data (Uint8Array).
+         * This is useful for images extracted from formats like Parquet.
+         * @param {Uint8Array} imageData - The raw image data (e.g., PNG byte array).
+         * @param {string} type - The type of texture (e.g., 'baseColor').
+         * @param {string} name - A descriptive name for the texture.
+         * @returns {Promise<GPUTexture>} A promise that resolves with the loaded GPUTexture.
+         */
+        async loadTextureFromData(imageData, type, name = "Parquet Texture") {
+          return new Promise(async (resolve, reject) => {
+            try {
+              // Create a Blob from the Uint8Array, assuming PNG format for images in Parquet
+              const blob = new Blob([imageData], { type: 'image/png' });
+              const imageBitmap = await createImageBitmap(blob);
+
+              const texture = this.device.createTexture({
+                label: `${type}: ${name}`,
+                size: [imageBitmap.width, imageBitmap.height, 1],
+                format: "rgba8unorm",
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+              });
+
+              this.device.queue.copyExternalImageToTexture(
+                { source: imageBitmap },
+                { texture: texture },
+                [imageBitmap.width, imageBitmap.height]
+              );
+
+              // Update the specific texture and its status
+              this.textures[type] = texture;
+              this.textureStatus[type] = true;
+              this.currentMaterialName = name; // Update material name to reflect the loaded texture
+              this.updateBindGroup();
+              this.updateTextureStatus();
+              resolve(texture);
+            } catch (error) {
+              console.error(`Error loading texture from data (${name}):`, error);
+              // Fallback to an empty texture and mark as missing
+              this.textures[type] = this.createEmptyTexture([255, 0, 255, 255]); // Magenta for error
+              this.textureStatus[type] = false;
+              this.updateBindGroup();
+              this.updateTextureStatus();
+              reject(error);
+            }
+          });
+        }
+
+
+        /**
+         * Shows or hides the loading indicator.
+         * @param {boolean} show - True to show, false to hide.
+         */
         showLoading(show) {
           const indicator = document.getElementById('loadingIndicator');
           indicator.classList.toggle('active', show);
         }
 
-        showStatus(message, type) {
-          const statusEl = document.getElementById('statusMessage');
+        /**
+         * Displays a status message to the user.
+         * @param {string} message - The message to display.
+         * @param {'info'|'success'|'error'} type - The type of message.
+         * @param {string} targetId - The ID of the status message element.
+         */
+        showStatus(message, type, targetId = 'statusMessage') {
+          const statusEl = document.getElementById(targetId);
           statusEl.textContent = message;
           statusEl.className = `status-message ${type}`;
           statusEl.style.display = 'block';
 
           setTimeout(() => {
             statusEl.style.display = 'none';
-          }, 5000);
+          }, 5000); // Hide after 5 seconds
         }
 
+        /**
+         * Displays a success message.
+         * @param {string} message - The message to display.
+         */
         showSuccess(message) {
           this.showStatus(message, 'success');
         }
 
+        /**
+         * Displays an error message.
+         * @param {string} message - The message to display.
+         */
         showError(message) {
           this.showStatus(message, 'error');
         }
 
         setupEventListeners() {
-          // Mouse interaction
+          // Mouse interaction for rotation
           this.canvas.addEventListener("mousedown", (e) => {
             this.state.dragState.dragging = true;
             this.state.dragState.lastX = e.clientX;
@@ -1456,16 +1595,16 @@
           this.canvas.addEventListener("wheel", (e) => {
             e.preventDefault();
             const zoomSpeed = 0.2;
-            if (e.deltaY < 0) {
+            if (e.deltaY < 0) { // Zoom in
               this.state.zoomLevel = Math.max(0.5, this.state.zoomLevel - zoomSpeed);
-            } else {
+            } else { // Zoom out
               this.state.zoomLevel = Math.min(15.0, this.state.zoomLevel + zoomSpeed);
             }
             document.getElementById('zoomLevel').value = this.state.zoomLevel;
             document.getElementById('zoomLevelValue').textContent = this.state.zoomLevel.toFixed(1);
           });
 
-          // File loading
+          // File loading for material folders and individual textures
           document.getElementById("textureFolder").addEventListener("change", (e) => {
             if (e.target.files.length > 0) {
               this.loadTextureFolder(Array.from(e.target.files));
@@ -1478,7 +1617,15 @@
             }
           });
 
-          // Mode switching
+          // New event listener for Parquet texture file input
+          document.getElementById("parquetTextureFile").addEventListener("change", (e) => {
+            if (e.target.files.length > 0) {
+              handleParquetFileLoad(e.target.files[0]);
+            }
+          });
+
+
+          // Mode switching (2D/3D)
           document.getElementById("mode2D").addEventListener("click", () => {
             this.state.mode = "2D";
             document.getElementById("mode2D").classList.add("active");
@@ -1501,7 +1648,7 @@
             this.state.shadingModel = e.target.value;
           });
 
-          // Range controls
+          // Range controls for various parameters
           this.setupRangeControl("lightPosX", "lightPosXValue", (val) => this.state.lightPos.x = val);
           this.setupRangeControl("lightPosY", "lightPosYValue", (val) => this.state.lightPos.y = val);
           this.setupRangeControl("lightPosZ", "lightPosZValue", (val) => this.state.lightPos.z = val);
@@ -1512,7 +1659,7 @@
           this.setupRangeControl("bumpIntensity", "bumpIntensityValue", (val) => this.state.bumpIntensity = val, 2);
           this.setupRangeControl("zoomLevel", "zoomLevelValue", (val) => this.state.zoomLevel = val, 1);
 
-          // Checkboxes
+          // Checkboxes for PBR mapping and light toggles
           this.setupCheckbox("baseColorMapping", (checked) => this.state.maps.baseColor = checked);
           this.setupCheckbox("normalMapping", (checked) => this.state.maps.normal = checked);
           this.setupCheckbox("roughnessMapping", (checked) => this.state.maps.roughness = checked);
@@ -1525,7 +1672,7 @@
           this.setupCheckbox("enableDirectionalLight", (checked) => this.state.enableDirectionalLight = checked);
           this.setupCheckbox("enablePointLight", (checked) => this.state.enablePointLight = checked);
 
-          // Buttons
+          // Buttons for rotation and view reset
           document.getElementById("toggleAutoRotate").addEventListener("click", (e) => {
             this.state.autoRotate = !this.state.autoRotate;
             e.target.textContent = this.state.autoRotate ? "Stop Rotation" : "Start Rotation";
@@ -1560,6 +1707,13 @@
           });
         }
 
+        /**
+         * Sets up an event listener for a range input and updates a display element.
+         * @param {string} inputId - The ID of the range input element.
+         * @param {string} displayId - The ID of the span element to display the value.
+         * @param {Function} callback - A callback function to execute with the new value.
+         * @param {number} decimals - Number of decimal places to display.
+         */
         setupRangeControl(inputId, displayId, callback, decimals = 1) {
           const input = document.getElementById(inputId);
           const display = document.getElementById(displayId);
@@ -1574,24 +1728,39 @@
           });
         }
 
+        /**
+         * Sets up an event listener for a checkbox input.
+         * @param {string} inputId - The ID of the checkbox input element.
+         * @param {Function} callback - A callback function to execute with the checked state.
+         */
         setupCheckbox(inputId, callback) {
           document.getElementById(inputId).addEventListener("change", (e) => {
             callback(e.target.checked);
           });
         }
 
+        /**
+         * Downloads the canvas content as an image.
+         * @param {'png'|'jpg'|'tiff'} format - The desired image format.
+         * @returns {void}
+         */
         downloadCanvasAsImage(format) {
           const link = document.createElement('a');
           const mimeType = format === 'jpg' ? 'image/jpeg' : 
                           format === 'tiff' ? 'image/tiff' : 'image/png';
 
+          // For TIFF, we'll download as PNG and inform the user it's a placeholder
           const actualFormat = format === 'tiff' ? 'png' : format;
 
           link.download = `material-preview.${actualFormat}`;
-          link.href = this.canvas.toDataURL(mimeType, format === 'jpg' ? 0.9 : 1.0);
+          link.href = this.canvas.toDataURL(mimeType, format === 'jpg' ? 0.9 : 1.0); // Quality for JPG
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
+
+          if (format === 'tiff') {
+            this.showStatus("TIFF download is not natively supported by canvas. Downloading as PNG.", "info");
+          }
         }
 
         render() {
@@ -1607,6 +1776,8 @@
           const modelMatrix = this.createModelMatrix();
           const viewMatrix = this.createViewMatrix();
           const projMatrix = this.createProjectionMatrix();
+          // Calculate normal matrix (inverse transpose of model matrix)
+          // For simplicity, assuming no non-uniform scaling, so just using top-left 3x3 of model matrix
           const normalMatrix = new Float32Array([
             modelMatrix[0], modelMatrix[1], modelMatrix[2], 0,
             modelMatrix[4], modelMatrix[5], modelMatrix[6], 0,
@@ -1614,24 +1785,25 @@
             0, 0, 0, 1
           ]);
 
-          const uniformArray = new Float32Array(120);
+          // Prepare uniform buffer data
+          const uniformArray = new Float32Array(120); // Allocate enough space
           let offset = 0;
 
-          // Matrices
+          // Matrices (64 floats total for 4x4 matrices)
           for (let i = 0; i < 16; i++) uniformArray[offset++] = viewMatrix[i];
           for (let i = 0; i < 16; i++) uniformArray[offset++] = projMatrix[i];
           for (let i = 0; i < 16; i++) uniformArray[offset++] = modelMatrix[i];
           for (let i = 0; i < 16; i++) uniformArray[offset++] = normalMatrix[i];
 
-          // Vectors
+          // Vectors (16 floats total for 4x4 vectors)
           uniformArray[offset++] = 0; uniformArray[offset++] = 0; 
-          uniformArray[offset++] = this.state.zoomLevel; uniformArray[offset++] = 1; // viewPos
+          uniformArray[offset++] = this.state.zoomLevel; uniformArray[offset++] = 1; // viewPos (camera position)
           uniformArray[offset++] = this.state.lightPos.x; uniformArray[offset++] = this.state.lightPos.y;
           uniformArray[offset++] = this.state.lightPos.z; uniformArray[offset++] = 1; // lightPos
           uniformArray[offset++] = 1; uniformArray[offset++] = 1; uniformArray[offset++] = 1;
-          uniformArray[offset++] = this.state.lightIntensity; // lightColor
+          uniformArray[offset++] = this.state.lightIntensity; // lightColor (rgb) and intensity (alpha)
 
-          // Map flags
+          // Map flags (9 floats)
           uniformArray[offset++] = this.state.maps.baseColor ? 1.0 : 0.0;
           uniformArray[offset++] = this.state.maps.normal ? 1.0 : 0.0;
           uniformArray[offset++] = this.state.maps.roughness ? 1.0 : 0.0;
@@ -1642,30 +1814,32 @@
           uniformArray[offset++] = this.state.maps.curvature ? 1.0 : 0.0;
           uniformArray[offset++] = this.state.maps.bump ? 1.0 : 0.0;
 
-          // Parameters
-          uniformArray[offset++] = this.state.mode === "2D" ? 0.0 : 1.0;
+          // Parameters (8 floats)
+          uniformArray[offset++] = this.state.mode === "2D" ? 0.0 : 1.0; // displayMode
           uniformArray[offset++] = this.state.normalMapIntensity;
           uniformArray[offset++] = this.state.curvatureIntensity;
           uniformArray[offset++] = this.state.bumpIntensity;
           uniformArray[offset++] = this.state.displacementScale;
-          uniformArray[offset++] = this.state.shadingModel === "ggx" ? 1.0 : 0.0;
+          uniformArray[offset++] = this.state.shadingModel === "ggx" ? 1.0 : 0.0; // shadingModel
           uniformArray[offset++] = this.state.enableDirectionalLight ? 1.0 : 0.0;
           uniformArray[offset++] = this.state.enablePointLight ? 1.0 : 0.0;
-          uniformArray[offset++] = time;
+          uniformArray[offset++] = time; // Time for animations
 
+          // Write uniform data to the buffer
           this.device.queue.writeBuffer(this.uniformBuffer, 0, uniformArray);
 
+          // Create and submit render commands
           const encoder = this.device.createCommandEncoder();
           const pass = encoder.beginRenderPass({
             colorAttachments: [{
               view: this.context.getCurrentTexture().createView(),
               loadOp: "clear",
-              clearValue: { r: 0.1, g: 0.1, b: 0.1, a: 1.0 },
+              clearValue: { r: 0.1, g: 0.1, b: 0.1, a: 1.0 }, // Dark gray background
               storeOp: "store",
             }],
             depthStencilAttachment: {
               view: this.depthTexture.createView(),
-              depthClearValue: 1.0,
+              depthClearValue: 1.0, // Clear depth to 1.0 (farthest)
               depthLoadOp: "clear",
               depthStoreOp: "store",
             }
@@ -1674,17 +1848,140 @@
           pass.setPipeline(this.pipeline);
           pass.setBindGroup(0, this.bindGroup);
           pass.setVertexBuffer(0, this.vertexBuffer);
-          pass.setIndexBuffer(this.indexBuffer, "uint16");
-          pass.drawIndexed(this.currentGeometry.indices.length);
+          pass.setIndexBuffer(this.indexBuffer, "uint16"); // Use uint16 for indices
+          pass.drawIndexed(this.currentGeometry.indices.length); // Draw using indexed geometry
           pass.end();
 
           this.device.queue.submit([encoder.finish()]);
-          requestAnimationFrame(() => this.render());
+          requestAnimationFrame(() => this.render()); // Request next frame
         }
       }
 
+      // Initialize the MaterialViewer
       const viewer = new MaterialViewer();
       viewer.init().catch(console.error);
+
+      // --- Parquet Loading Logic ---
+      let wasmModuleInitialized = false;
+
+      /**
+       * Initializes the WebAssembly module for Parquet reading once.
+       * Displays status messages during the process.
+       * @returns {Promise<void>}
+       */
+      async function initializeWasmOnce() {
+        if (!wasmModuleInitialized) {
+          viewer.showStatus('Loading WebAssembly module for Parquet…', 'info', 'parquetStatusMessage');
+          try {
+            // The path './package/esm/parquet_wasm_bg.wasm' assumes it's in a 'package/esm' directory
+            // relative to this HTML file. Adjust if your setup is different.
+            await initWasm('./package/esm/parquet_wasm_bg.wasm'); 
+            wasmModuleInitialized = true;
+            console.log('WebAssembly module for Parquet initialized.');
+            viewer.showSuccess('Parquet WebAssembly module loaded.', 'parquetStatusMessage');
+          } catch (err) {
+              console.error('Failed to initialize WebAssembly for Parquet:', err);
+              viewer.showError('Error: Could not initialize Parquet WebAssembly. ' + (err.message || String(err)), 'parquetStatusMessage');
+              throw err;
+          }
+        }
+      }
+
+      /**
+       * Handles the loading and processing of a selected Parquet file.
+       * Extracts image data based on 'map_type' column and loads them as textures.
+       * @param {File} file - The selected Parquet file.
+       * @returns {Promise<void>}
+       */
+      async function handleParquetFileLoad(file) {
+        viewer.showLoading(true);
+        viewer.showStatus(`Processing Parquet file: ${file.name}...`, 'info', 'parquetStatusMessage');
+
+        try {
+          await initializeWasmOnce(); // Ensure WASM is loaded
+
+          // Read the file into a Uint8Array buffer
+          const fileBuffer = new Uint8Array(await file.arrayBuffer());
+          
+          // Use parquet_wasm to read the Parquet file into an IPC stream
+          const wasmSideTable = readParquet(fileBuffer);
+          const ipcStreamBytes = wasmSideTable.intoIPCStream();
+          
+          // Use apache-arrow to convert the IPC stream into a JavaScript Table
+          const arrowJsTable = tableFromIPC(ipcStreamBytes);
+
+          if (arrowJsTable.numRows === 0) {
+            viewer.showStatus(`No data rows found in ${file.name}.`, 'info', 'parquetStatusMessage');
+            viewer.showLoading(false);
+            return;
+          }
+
+          // Check if 'image_data' and 'map_type' columns exist
+          const imageDataColumn = arrowJsTable.schema.fields.find(field => field.name === 'image_data');
+          const mapTypeColumn = arrowJsTable.schema.fields.find(field => field.name === 'map_type');
+
+          if (!imageDataColumn) {
+            viewer.showError(`Error: "${file.name}" does not contain an 'image_data' column. Please ensure the Parquet file has an 'image_data' column with PNG data.`, 'parquetStatusMessage');
+            viewer.showLoading(false);
+            return;
+          }
+          if (!mapTypeColumn) {
+            viewer.showError(`Error: "${file.name}" does not contain a 'map_type' column. Cannot determine texture type.`, 'parquetStatusMessage');
+            viewer.showLoading(false);
+            return;
+          }
+
+          let imagesLoadedCount = 0;
+          const supportedMapTypes = viewer.textures; // Use the viewer's texture object keys as supported types
+
+          // Iterate through rows to find image data and its corresponding map_type
+          for (let i = 0; i < arrowJsTable.numRows; i++) {
+            const row = arrowJsTable.get(i);
+            const imageData = row.image_data;
+            const mapType = row.map_type ? row.map_type.toLowerCase() : null; // Convert to lowercase for consistent matching
+
+            if (imageData && mapType && supportedMapTypes.hasOwnProperty(mapType)) {
+              let rawImageData;
+              if (typeof imageData === 'string') {
+                // If it's a base64 string, convert it to Uint8Array
+                try {
+                  const binaryString = atob(imageData);
+                  rawImageData = new Uint8Array(binaryString.length);
+                  for (let j = 0; j < binaryString.length; j++) {
+                    rawImageData[j] = binaryString.charCodeAt(j);
+                  }
+                } catch (b64Error) {
+                  console.warn(`Row ${i}: Failed to decode Base64 image data for map_type '${mapType}'. Skipping.`, b64Error);
+                  continue;
+                }
+              } else if (imageData instanceof Uint8Array) {
+                rawImageData = imageData;
+              } else {
+                console.warn(`Row ${i}: 'image_data' for map_type '${mapType}' is of unsupported type '${typeof imageData}'. Expected string (Base64) or Uint8Array. Skipping.`);
+                continue;
+              }
+
+              // Load the extracted raw image data into the correct texture type
+              await viewer.loadTextureFromData(rawImageData, mapType, `Parquet Image (${mapType}) from ${file.name}`);
+              imagesLoadedCount++;
+            } else if (imageData && mapType && !supportedMapTypes.hasOwnProperty(mapType)) {
+              console.warn(`Row ${i}: Unsupported map_type '${mapType}' found. Skipping image.`);
+            }
+          }
+
+          if (imagesLoadedCount > 0) {
+            viewer.showSuccess(`Successfully loaded ${imagesLoadedCount} image(s) from Parquet file: ${file.name}`, 'parquetStatusMessage');
+          } else {
+            viewer.showStatus(`No valid image data or supported map types found in ${file.name}.`, 'info', 'parquetStatusMessage');
+          }
+
+        } catch (err) {
+          console.error('An error occurred during Parquet file processing:', err);
+          viewer.showError('Error processing Parquet file: ' + (err.message || String(err)), 'parquetStatusMessage');
+        } finally {
+          viewer.showLoading(false);
+        }
+      }
     </script>
   </body>
 </html>
