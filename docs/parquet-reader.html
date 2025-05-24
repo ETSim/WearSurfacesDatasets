@@ -2,13 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Parquet-WASM Image Viewer (Improved UI)</title>
+  <title>Parquet-WASM Image Viewer (Enhanced with Downloads)</title>
   <style>
     :root {
       --primary-color: #007bff;
       --primary-color-darker: #005a9c;
       --success-color: #28a745;
       --error-color: #dc3545;
+      --download-color: #6f42c1;
+      --download-color-darker: #5a32a3;
       --info-bg-color: #e7f3fe;
       --success-bg-color: #d4edda;
       --error-bg-color: #f8d7da;
@@ -24,7 +26,7 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      max-width: 900px; /* Slightly wider */
+      max-width: 900px;
       margin: auto;
       padding: var(--spacing-unit);
       background-color: var(--background-color);
@@ -76,8 +78,22 @@
       background-color: var(--primary-color-darker);
     }
 
+    .button.download-all {
+      background-color: var(--download-color);
+      margin-left: 1rem;
+    }
+    .button.download-all:hover {
+      background-color: var(--download-color-darker);
+    }
+
+    .button.download-all:disabled {
+      background-color: #6c757d;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
     #fileInput {
-      display: none; /* Hidden, label is used */
+      display: none;
     }
     .file-name-display {
       display: inline-block;
@@ -102,7 +118,6 @@
     .url-input-container button {
         white-space: nowrap;
     }
-
 
     #statusContainer {
       margin-top: var(--spacing-unit);
@@ -130,19 +145,16 @@
       color: #721c24;
     }
 
-    /* Icons using pseudo-elements (simple example) */
     #statusContainer::before {
       margin-right: 0.75rem;
-      font-weight: bold; /* Make symbol thicker */
-      font-size: 1.2em; /* Slightly larger symbol */
+      font-weight: bold;
+      font-size: 1.2em;
     }
     #statusContainer.status-success::before { content: "✔"; color: var(--success-color); }
     #statusContainer.status-error::before { content: "✖"; color: var(--error-color); }
     #statusContainer.status-info::before { content: "ℹ"; color: var(--primary-color-darker); }
-    /* Loader will be prepended in JS, so no ::before for status-loading if loader div is used */
 
-
-    #metadataContainer {
+    .data-display-section {
       background-color: var(--container-bg-color);
       padding: var(--spacing-unit);
       border-radius: var(--border-radius);
@@ -151,45 +163,63 @@
       margin-bottom: calc(var(--spacing-unit) * 1.5);
       border: 1px solid var(--border-color);
     }
-    #metadataContainer h2 {
+    .data-display-section h2, .data-display-section h3 {
       margin-top: 0;
       color: var(--primary-color-darker);
       border-bottom: 1px solid var(--border-color);
       padding-bottom: 0.5rem;
       margin-bottom: 1rem;
     }
-    #metadataContainer:empty {
-      display: none; /* Hide if no metadata */
+    .data-display-section:empty {
+      display: none;
     }
 
-    #metadataContainer table {
+    .data-display-section table {
         width: 100%;
         border-collapse: collapse;
         margin-top: 1rem;
+        font-size: 0.9em;
     }
-    #metadataContainer th, #metadataContainer td {
+    .data-display-section th, .data-display-section td {
         border: 1px solid var(--border-color);
         padding: 0.5rem 0.75rem;
         text-align: left;
     }
-    #metadataContainer th {
+    .data-display-section th {
         background-color: var(--background-color);
         font-weight: 600;
         color: var(--primary-color-darker);
     }
-    #metadataContainer tbody tr:nth-child(odd) {
+    .data-display-section tbody tr:nth-child(odd) {
         background-color: var(--background-color);
     }
-    #metadataContainer tbody tr:hover {
-        background-color: #f0f8ff; /* Light blue on hover */
+    .data-display-section tbody tr:hover {
+        background-color: #f0f8ff;
+    }
+    .data-display-section table.schema-summary td:first-child {
+        font-weight: 500;
+    }
+    .data-display-section .table-container {
+        overflow-x: auto;
     }
 
+    .images-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: calc(var(--spacing-unit) * 1.5);
+      margin-bottom: var(--spacing-unit);
+    }
+
+    .images-header h2 {
+      margin: 0;
+      color: var(--primary-color-darker);
+    }
 
     #imageContainer {
       display: flex;
       flex-wrap: wrap;
       gap: var(--spacing-unit);
-      margin-top: var(--spacing-unit);
       padding: var(--spacing-unit);
       background-color: var(--container-bg-color);
       border: 1px solid var(--border-color);
@@ -203,7 +233,7 @@
       text-align: center;
       color: var(--text-muted-color);
       font-style: italic;
-      align-self: center; /* Center vertically in flex container */
+      align-self: center;
     }
 
     .image-card {
@@ -215,31 +245,50 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding-bottom: 0.5rem; /* Space below title */
+        padding-bottom: 0.5rem;
+        position: relative;
     }
 
     .image-card img {
-      max-width: 100%; /* Constrain image to card width */
-      height: 150px; /* Fixed height for consistent display */
-      object-fit: contain; /* Ensure entire image is visible, no cropping */
+      max-width: 100%;
+      height: 150px;
+      object-fit: contain;
       display: block;
       transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
-      border-bottom: 1px solid var(--border-color); /* Separator */
+      border-bottom: 1px solid var(--border-color);
       margin-bottom: 0.5rem;
     }
     .image-card img:hover {
-      transform: scale(1.02); /* Slight zoom on hover */
+      transform: scale(1.02);
       box-shadow: 0 4px 8px rgba(0,0,0,0.15);
     }
+
     .image-card .image-title {
         font-size: 0.9em;
         color: var(--text-color);
         text-align: center;
         padding: 0 0.5rem;
         word-break: break-word;
-        max-height: 3em; /* Limit title height */
+        max-height: 3em;
         overflow: hidden;
         text-overflow: ellipsis;
+        margin-bottom: 0.5rem;
+    }
+
+    .image-card .download-single {
+      background-color: var(--download-color);
+      color: white;
+      border: none;
+      padding: 0.4rem 0.8rem;
+      border-radius: var(--border-radius);
+      cursor: pointer;
+      font-size: 0.8em;
+      transition: background-color 0.2s ease-in-out;
+      margin: 0.25rem;
+    }
+
+    .image-card .download-single:hover {
+      background-color: var(--download-color-darker);
     }
 
     .image-load-error {
@@ -247,8 +296,8 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      width: 200px; /* Match card width */
-      height: 200px; /* Match card height */
+      width: 200px;
+      height: 200px;
       background-color: #f8f9fa;
       color: var(--error-color);
       font-size: 0.85em;
@@ -256,27 +305,25 @@
       padding: 0.5rem;
       border-color: var(--error-color);
       font-weight: 500;
-      border-radius: var(--border-radius); /* Inherit from card if part of it */
+      border-radius: var(--border-radius);
     }
-    .image-load-error::before { /* Error icon for image */
+    .image-load-error::before {
         content: "⚠";
         font-size: 2em;
         display: block;
         margin-bottom: 0.25rem;
     }
 
-
-    /* CSS Loader */
     .loader {
-      border: 4px solid #f3f3f3; /* Light grey */
-      border-top: 4px solid var(--primary-color); /* Blue from variable */
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid var(--primary-color);
       border-radius: 50%;
-      width: 20px; /* Adjusted size */
-      height: 20px; /* Adjusted size */
+      width: 20px;
+      height: 20px;
       animation: spin 0.8s linear infinite;
       display: inline-block;
-      margin-right: 0.75rem; /* Spacing from text */
-      vertical-align: middle; /* Align with text */
+      margin-right: 0.75rem;
+      vertical-align: middle;
     }
 
     @keyframes spin {
@@ -306,12 +353,24 @@
 
   <div id="statusContainer"></div>
 
-  <div id="metadataContainer">
+  <div id="metadataContainer" class="data-display-section">
     <h2>Parquet File Metadata (Schema)</h2>
-    <div id="schemaDisplay"></div> </div>
+    <div id="schemaDisplay"></div>
+  </div>
+
+  <div id="sampleDataContainer" class="data-display-section">
+      <h2>Sample Data (First 10 Rows)</h2>
+      <div id="sampleDataTable"></div>
+  </div>
+
+  <div class="images-header">
+    <h2>Images</h2>
+    <button id="downloadAllButton" class="button download-all" disabled>Download All Images</button>
+  </div>
 
   <div id="imageContainer"></div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script type="module">
     import initWasm, { readParquet } from './package/esm/parquet_wasm.js';
     import { tableFromIPC } from 'https://cdn.jsdelivr.net/npm/apache-arrow@20.0.0/+esm';
@@ -323,9 +382,14 @@
     const imagesElement = document.getElementById('imageContainer');
     const fileNameDisplayElement = document.getElementById('fileNameDisplay');
     const metadataContainer = document.getElementById('metadataContainer');
-    const schemaDisplayElement = document.getElementById('schemaDisplay'); // This will now hold the table HTML
+    const schemaDisplayElement = document.getElementById('schemaDisplay');
+    const sampleDataContainer = document.getElementById('sampleDataContainer');
+    const sampleDataTableElement = document.getElementById('sampleDataTable');
+    const downloadAllButton = document.getElementById('downloadAllButton');
 
     let wasmModuleInitialized = false;
+    let imageDataStore = []; // Store image data for download functionality
+    const MAX_SAMPLE_ROWS = 10;
 
     function showLoader(message) {
       statusElement.innerHTML = `<div class="loader"></div><span>${message}</span>`;
@@ -340,9 +404,87 @@
 
     function clearDisplays() {
         imagesElement.innerHTML = '';
-        schemaDisplayElement.innerHTML = ''; // Clear inner HTML for the table
-        metadataContainer.style.display = 'none'; // Hide metadata container
+        schemaDisplayElement.innerHTML = '';
+        metadataContainer.style.display = 'none';
+        sampleDataTableElement.innerHTML = '';
+        sampleDataContainer.style.display = 'none';
+        imageDataStore = [];
+        downloadAllButton.disabled = true;
         setStatusMessage('Ready to select a .parquet file.', 'info');
+    }
+
+    function downloadSingleImage(base64Data, filename) {
+      try {
+        // Convert base64 to blob
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/png' });
+        
+        // Create download link
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${filename}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        console.error('Error downloading image:', error);
+        setStatusMessage(`Error downloading image: ${error.message}`, 'error');
+      }
+    }
+
+    async function downloadAllImages() {
+      if (imageDataStore.length === 0) {
+        setStatusMessage('No images available for download.', 'info');
+        return;
+      }
+
+      try {
+        downloadAllButton.disabled = true;
+        showLoader(`Creating ZIP file with ${imageDataStore.length} images...`);
+
+        const zip = new JSZip();
+        
+        for (let i = 0; i < imageDataStore.length; i++) {
+          const { base64Data, filename } = imageDataStore[i];
+          
+          // Convert base64 to binary
+          const byteCharacters = atob(base64Data);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let j = 0; j < byteCharacters.length; j++) {
+            byteNumbers[j] = byteCharacters.charCodeAt(j);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          
+          zip.file(`${filename}.png`, byteArray);
+        }
+
+        showLoader('Generating ZIP file...');
+        const content = await zip.generateAsync({ type: 'blob' });
+        
+        // Download the ZIP file
+        const url = URL.createObjectURL(content);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'parquet_images.zip';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        setStatusMessage(`Successfully downloaded ${imageDataStore.length} images as ZIP file.`, 'success');
+      } catch (error) {
+        console.error('Error creating ZIP file:', error);
+        setStatusMessage(`Error creating ZIP file: ${error.message}`, 'error');
+      } finally {
+        downloadAllButton.disabled = false;
+      }
     }
 
     async function initializeWasmOnce() {
@@ -362,7 +504,7 @@
     }
 
     function robustUint8ArrayToBase64(u8Array) {
-      const CHUNK_SIZE = 0x8000; // 32KB
+      const CHUNK_SIZE = 0x8000;
       let binaryString = "";
       for (let i = 0; i < u8Array.length; i += CHUNK_SIZE) {
         binaryString += String.fromCharCode.apply(null, u8Array.subarray(i, i + CHUNK_SIZE));
@@ -375,10 +517,9 @@
       }
     }
 
-    // Function to render schema as an HTML table
     function renderSchemaTable(schemaFields, numRows, numColumns) {
         let tableHtml = `
-            <table>
+            <table class="schema-summary">
                 <thead>
                     <tr>
                         <th>Property</th>
@@ -386,11 +527,12 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr><td>Rows</td><td>${numRows}</td></tr>
-                    <tr><td>Columns</td><td>${numColumns}</td></tr>
+                    <tr><td>Total Rows</td><td>${numRows}</td></tr>
+                    <tr><td>Total Columns</td><td>${numColumns}</td></tr>
                 </tbody>
             </table>
             <h3>Column Details:</h3>
+            <div class="table-container">
             <table>
                 <thead>
                     <tr>
@@ -413,16 +555,77 @@
         tableHtml += `
                 </tbody>
             </table>
+            </div>
         `;
         schemaDisplayElement.innerHTML = tableHtml;
         metadataContainer.style.display = 'block';
     }
 
+    function renderSampleDataTable(arrowJsTable) {
+        if (arrowJsTable.numRows === 0) {
+            sampleDataTableElement.innerHTML = '<p>No data rows to display a sample.</p>';
+            sampleDataContainer.style.display = 'block';
+            return;
+        }
+
+        const columnsToDisplay = arrowJsTable.schema.fields
+            .filter(field => field.name !== 'image_data')
+            .map(field => field.name);
+
+        if (columnsToDisplay.length === 0) {
+             sampleDataTableElement.innerHTML = '<p>No non-image data columns to display a sample.</p>';
+             sampleDataContainer.style.display = 'block';
+             return;
+        }
+
+        let tableHtml = '<div class="table-container"><table><thead><tr>';
+        columnsToDisplay.forEach(colName => {
+            tableHtml += `<th>${colName}</th>`;
+        });
+        tableHtml += '</tr></thead><tbody>';
+
+        for (let i = 0; i < Math.min(arrowJsTable.numRows, MAX_SAMPLE_ROWS); i++) {
+            tableHtml += '<tr>';
+            // Access row data using .toArray() to get an array of records
+            // or iterate directly if Table.get(i) returns an object with direct property access.
+            // The original code `row.get(colName)` suggests `row` is a RecordBatch row or similar.
+            // Apache Arrow JS Table.get(i) returns a `Record` object which allows direct property access like `row[colName]`
+            // or `row.get(colName)` if it's a `Vector` from an older Arrow version.
+            // For apache-arrow@20.0.0, `table.get(i)` returns a `Record` which has direct property access for fields.
+            const row = arrowJsTable.get(i); 
+
+            columnsToDisplay.forEach(colName => {
+                // Access cell value directly using property access for Arrow Record objects
+                let cellValue = row[colName]; 
+                if (cellValue === null || cellValue === undefined) {
+                    cellValue = 'NULL';
+                } else if (cellValue instanceof Uint8Array) {
+                    cellValue = `[${cellValue.length} bytes]`;
+                } else if (typeof cellValue === 'object' && cellValue !== null) {
+                    cellValue = JSON.stringify(cellValue);
+                }
+                tableHtml += `<td>${cellValue}</td>`;
+            });
+            tableHtml += '</tr>';
+        }
+        tableHtml += '</tbody></table></div>';
+
+        if (arrowJsTable.numRows > MAX_SAMPLE_ROWS) {
+            tableHtml += `<p>Displaying first ${MAX_SAMPLE_ROWS} rows. Total rows: ${arrowJsTable.numRows}.</p>`;
+        }
+
+        sampleDataTableElement.innerHTML = tableHtml;
+        sampleDataContainer.style.display = 'block';
+    }
 
     async function processParquetFile(fileBuffer, sourceName = 'Selected File') {
       imagesElement.innerHTML = '';
-      schemaDisplayElement.innerHTML = ''; // Clear inner HTML for the table
+      schemaDisplayElement.innerHTML = '';
       metadataContainer.style.display = 'none';
+      sampleDataTableElement.innerHTML = '';
+      sampleDataContainer.style.display = 'none';
+      imageDataStore = [];
+      downloadAllButton.disabled = true;
       let displayedImageCount = 0;
 
       try {
@@ -437,7 +640,6 @@
         showLoader(`Decoding Arrow IPC Stream (JavaScript) and extracting metadata…`);
         const arrowJsTable = tableFromIPC(ipcStreamBytes);
 
-        // Display Schema/Metadata as a table
         if (arrowJsTable.schema) {
             const schemaFields = arrowJsTable.schema.fields.map(field => ({
                 name: field.name,
@@ -451,13 +653,13 @@
             metadataContainer.style.display = 'block';
         }
 
+        renderSampleDataTable(arrowJsTable);
 
         if (arrowJsTable.numRows === 0) {
           setStatusMessage(`No data rows found in ${sourceName}.`, 'info');
           return;
         }
 
-        // Check for 'image_data' column
         if (!arrowJsTable.schema.fields.some(field => field.name === 'image_data')) {
             setStatusMessage(`Error: "${sourceName}" does not contain an 'image_data' column. Please ensure the Parquet file has an 'image_data' column with PNG data.`, 'error');
             return;
@@ -468,7 +670,8 @@
         await new Promise(resolve => setTimeout(resolve, 0));
 
         let processedRowCount = 0;
-        for (const row of arrowJsTable) {
+        for (let i = 0; i < arrowJsTable.numRows; i++) {
+          const row = arrowJsTable.get(i);
           processedRowCount++;
           if (processedRowCount % 10 === 0 || processedRowCount === arrowJsTable.numRows) {
                showLoader(`Processing image ${processedRowCount} of ${arrowJsTable.numRows} from ${sourceName}...`);
@@ -476,7 +679,6 @@
           }
 
           const imageDataColumn = row.image_data;
-          // Prioritize 'map_type' for the image title, then 'title', 'name', 'id'
           const imageTitleColumn = row.map_type || row.title || row.name || row.id || `Image ${processedRowCount}`;
 
           if (imageDataColumn === null || imageDataColumn === undefined) {
@@ -543,6 +745,10 @@
           titleElement.className = 'image-title';
           titleElement.textContent = String(imageTitleColumn);
 
+          const downloadButton = document.createElement('button');
+          downloadButton.className = 'download-single';
+          downloadButton.textContent = '⬇ Download';
+          downloadButton.onclick = () => downloadSingleImage(base64EncodedPng, String(imageTitleColumn).replace(/[^a-z0-9]/gi, '_'));
 
           imgElement.onerror = () => {
             console.error(`Failed to load image from Base64 data for row ${processedRowCount - 1} (Title: ${String(imageTitleColumn)}). This might indicate corrupted PNG data or incorrect Base64 encoding.`);
@@ -553,8 +759,20 @@
             cardDiv.appendChild(errorDiv);
           };
 
+          imgElement.onload = () => {
+            // Store image data for bulk download
+            imageDataStore.push({
+              base64Data: base64EncodedPng,
+              filename: String(imageTitleColumn).replace(/[^a-z0-9]/gi, '_')
+            });
+            if (imageDataStore.length > 0) {
+              downloadAllButton.disabled = false;
+            }
+          };
+
           cardDiv.appendChild(imgElement);
           cardDiv.appendChild(titleElement);
+          cardDiv.appendChild(downloadButton);
           imagesElement.appendChild(cardDiv);
           displayedImageCount++;
         }
@@ -574,6 +792,9 @@
         fileInputElement.value = '';
       }
     }
+
+    // Event listeners
+    downloadAllButton.addEventListener('click', downloadAllImages);
 
     fileInputElement.addEventListener('change', async (event) => {
       const file = event.target.files?.[0];
@@ -621,7 +842,7 @@
             setStatusMessage('Info: The URL does not end with ".parquet". Proceeding anyway, but file might not be a valid Parquet.', 'info');
         }
 
-        showLoader(`Workspaceing Parquet file from URL: ${url}…`);
+        showLoader(`Downloading Parquet file from URL: ${url}…`);
         try {
             const response = await fetch(url);
             if (!response.ok) {
@@ -639,7 +860,6 @@
             setStatusMessage(errorMessage, 'error');
         }
     });
-
 
     window.addEventListener('DOMContentLoaded', async () => {
       try {
